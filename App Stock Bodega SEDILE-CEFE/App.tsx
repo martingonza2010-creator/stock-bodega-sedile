@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Search, Lock, Unlock, Clipboard, Image as ImageIcon, Plus, Trash2,
   RefreshCw, Check, X, AlertTriangle, AlertCircle, ShieldAlert,
@@ -1195,6 +1195,7 @@ export default function App() {
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['Todos']);
   const [filterCritical, setFilterCritical] = useState(false); // disponibilidad < 7 días
   const [filterOutOfStock, setFilterOutOfStock] = useState(false); // ver solo stock en 0
+  const [stockRiskFilter, setStockRiskFilter] = useState<'all' | 'out_of_stock' | 'critical' | 'warning'>('all'); // filtro rápido interactivo por nivel de riesgo
   const [showHidden, setShowHidden] = useState(false); // Para mostrar/ocultar productos ocultos en vista admin
   const [sortByLicitacion, setSortByLicitacion] = useState(false); // ordenar por licitación/contrato
   
@@ -2963,6 +2964,29 @@ export default function App() {
     }
   };
 
+  // --- Conteo de Riesgo Predictivo de Stock ---
+  const riskCounts = useMemo(() => {
+    let outOfStock = 0;
+    let critical = 0;
+    let warning = 0;
+
+    items.forEach(item => {
+      if (item.oculto && (!isAdmin || !showHidden)) return;
+      if (item.stock_sedile === 0) {
+        outOfStock++;
+      } else if (item.uso_diario > 0) {
+        const days = item.stock_sedile / item.uso_diario;
+        if (days < 7) {
+          critical++;
+        } else if (days < 14) {
+          warning++;
+        }
+      }
+    });
+
+    return { outOfStock, critical, warning, totalRisk: outOfStock + critical + warning };
+  }, [items, isAdmin, showHidden]);
+
   // --- Helpers de Renderizado y Búsqueda ---
   const getFilteredItems = () => {
     let result = items.filter(item => {
@@ -2982,10 +3006,20 @@ export default function App() {
       // Filtrar productos sin stock (cantidad 0)
       const matchesOutOfStock = !filterOutOfStock || item.stock_sedile === 0;
 
+      // Filtro Predictivo Rápido por nivel de riesgo
+      let matchesRisk = true;
+      if (stockRiskFilter === 'out_of_stock') {
+        matchesRisk = item.stock_sedile === 0;
+      } else if (stockRiskFilter === 'critical') {
+        matchesRisk = item.stock_sedile > 0 && daysSedile !== -1 && daysSedile < 7;
+      } else if (stockRiskFilter === 'warning') {
+        matchesRisk = item.stock_sedile > 0 && daysSedile >= 7 && daysSedile < 14;
+      }
+
       // Filtrar ocultos (solo el admin con la opción showHidden puede verlos)
       const matchesHidden = (isAdmin && showHidden) ? true : !item.oculto;
 
-      return matchesSearch && matchesCategory && matchesCritical && matchesHidden && matchesOutOfStock;
+      return matchesSearch && matchesCategory && matchesCritical && matchesHidden && matchesOutOfStock && matchesRisk;
     });
 
     // Ordenar para mandar los RTH al final, o por Licitación si está activo
@@ -6434,6 +6468,93 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* --- BANNER DE ALERTAS PREDICTIVAS Y FILTRO RÁPIDO DE RIESGO --- */}
+        <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 rounded-2xl p-4 sm:p-5 text-white shadow-lg border border-slate-700/60 flex flex-col lg:flex-row lg:items-center justify-between gap-4 animate-fade-in">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0 shadow-inner">
+              <AlertTriangle className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-extrabold text-sm sm:text-base tracking-tight text-white flex items-center gap-1.5">
+                  Monitor Predictivo de Stock & Quiebres
+                </h3>
+                {stockRiskFilter !== 'all' && (
+                  <span className="bg-teal-500/20 text-teal-300 border border-teal-500/40 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
+                    Filtro Activo
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-300 mt-0.5 font-medium">
+                Detección oportuna según ritmo de consumo diario para prevenir quiebres de inventario.
+              </p>
+            </div>
+          </div>
+
+          {/* Chips interactivos de estado */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 🔴 Agotados */}
+            <button
+              onClick={() => setStockRiskFilter(stockRiskFilter === 'out_of_stock' ? 'all' : 'out_of_stock')}
+              className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black transition-all border shadow-sm ${
+                stockRiskFilter === 'out_of_stock'
+                  ? 'bg-rose-600 text-white border-rose-400 ring-2 ring-rose-400/40 shadow-lg scale-105'
+                  : riskCounts.outOfStock > 0
+                    ? 'bg-rose-950/60 text-rose-300 border-rose-800/80 hover:bg-rose-900/80 hover:scale-102'
+                    : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:bg-slate-750'
+              }`}
+              title="Filtrar productos con stock 0"
+            >
+              <span className={`w-2.5 h-2.5 rounded-full ${riskCounts.outOfStock > 0 ? 'bg-rose-500 animate-ping' : 'bg-slate-500'}`} />
+              <span>{riskCounts.outOfStock} Agotados</span>
+            </button>
+
+            {/* 🟠 Críticos (< 7 días) */}
+            <button
+              onClick={() => setStockRiskFilter(stockRiskFilter === 'critical' ? 'all' : 'critical')}
+              className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black transition-all border shadow-sm ${
+                stockRiskFilter === 'critical'
+                  ? 'bg-amber-600 text-white border-amber-400 ring-2 ring-amber-400/40 shadow-lg scale-105'
+                  : riskCounts.critical > 0
+                    ? 'bg-amber-950/60 text-amber-300 border-amber-800/80 hover:bg-amber-900/80 hover:scale-102'
+                    : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:bg-slate-750'
+              }`}
+              title="Filtrar productos con menos de 7 días de stock"
+            >
+              <span className={`w-2.5 h-2.5 rounded-full ${riskCounts.critical > 0 ? 'bg-amber-500' : 'bg-slate-500'}`} />
+              <span>{riskCounts.critical} Críticos (&lt; 7d)</span>
+            </button>
+
+            {/* 🟡 En Alerta (7-14 días) */}
+            <button
+              onClick={() => setStockRiskFilter(stockRiskFilter === 'warning' ? 'all' : 'warning')}
+              className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black transition-all border shadow-sm ${
+                stockRiskFilter === 'warning'
+                  ? 'bg-yellow-600 text-white border-yellow-400 ring-2 ring-yellow-400/40 shadow-lg scale-105'
+                  : riskCounts.warning > 0
+                    ? 'bg-yellow-950/60 text-yellow-300 border-yellow-800/80 hover:bg-yellow-900/80 hover:scale-102'
+                    : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:bg-slate-750'
+              }`}
+              title="Filtrar productos con 7 a 14 días de stock"
+            >
+              <span className={`w-2.5 h-2.5 rounded-full ${riskCounts.warning > 0 ? 'bg-yellow-500' : 'bg-slate-500'}`} />
+              <span>{riskCounts.warning} En Alerta (7-14d)</span>
+            </button>
+
+            {/* Botón Ver Todos / Reset */}
+            {stockRiskFilter !== 'all' && (
+              <button
+                onClick={() => setStockRiskFilter('all')}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-extrabold bg-slate-700 hover:bg-slate-600 text-slate-200 transition-all border border-slate-600 shadow-sm"
+                title="Mostrar todos los productos"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Mostrar Todos</span>
+              </button>
+            )}
+          </div>
+        </div>
 
         {/* --- CONTENEDOR DE TABLAS PRINCIPALES --- */}
         <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden">
