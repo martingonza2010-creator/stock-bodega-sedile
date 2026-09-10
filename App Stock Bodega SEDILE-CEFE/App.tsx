@@ -6112,20 +6112,6 @@ export default function App() {
             {/* Lado Derecho: Filtros y Visualización */}
             <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-start lg:justify-end">
               
-              {/* Filtro Productos Sin Stock */}
-              <button
-                onClick={() => setFilterOutOfStock(!filterOutOfStock)}
-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-all active:scale-95 ${
-                  filterOutOfStock 
-                    ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100/80 shadow-sm' 
-                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                }`}
-                title="Muestra solo aquellos productos cuyo stock actual sea 0"
-              >
-                <AlertCircle className={`w-3.5 h-3.5 ${filterOutOfStock ? 'text-rose-600' : 'text-slate-400'}`} />
-                Productos sin stock
-              </button>
-
               {/* Filtro Crítico */}
               {isAdmin && (
                 <button
