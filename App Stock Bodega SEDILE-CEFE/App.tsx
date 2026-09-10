@@ -6880,23 +6880,27 @@ export default function App() {
             ) : (
               
               // =================================================
-              // 2. VISTA PÚBLICA (SIMPLIFICADA - 3 COLUMNAS RESPONSIVA)
+              // 2. VISTA PÚBLICA (SIMPLIFICADA - 4 COLUMNAS RESPONSIVA)
               // =================================================
               <div className="w-full border border-slate-200/80 rounded-2xl shadow-sm bg-white overflow-hidden">
                 <table className="w-full text-left table-fixed border-collapse">
                   <thead>
                     <tr className="bg-slate-800 text-white font-bold text-[10px] sm:text-xs uppercase tracking-wider">
-                      <th className="py-3 px-2 sm:py-4 sm:px-6 sticky top-0 z-20 bg-slate-800 text-white border-b border-slate-700 w-[45%] sm:w-[50%]">
+                      <th className="py-3 px-2 sm:py-4 sm:px-6 sticky top-0 z-20 bg-slate-800 text-white border-b border-slate-700 w-[38%] sm:w-[40%]">
                         <span className="hidden sm:inline">Nombre del Producto / Fórmula</span>
                         <span className="inline sm:hidden">Producto / Fórmula</span>
                       </th>
-                      <th className="py-3 px-2 sm:py-4 sm:px-6 text-center sticky top-0 z-20 bg-slate-800 text-white border-b border-slate-700 w-[27%] sm:w-[22%]">
+                      <th className="py-3 px-2 sm:py-4 sm:px-6 text-center sticky top-0 z-20 bg-slate-800 text-white border-b border-slate-700 w-[22%] sm:w-[20%]">
                         <span className="hidden sm:inline">Stock SEDILE</span>
                         <span className="inline sm:hidden">Stock</span>
                       </th>
-                      <th className="py-3 px-2 sm:py-4 sm:px-6 text-center sticky top-0 z-20 bg-slate-800 text-white border-b border-slate-700 w-[28%] sm:w-[28%]">
+                      <th className="py-3 px-2 sm:py-4 sm:px-6 text-center sticky top-0 z-20 bg-slate-800 text-white border-b border-slate-700 w-[20%] sm:w-[20%]">
                         <span className="hidden sm:inline">Disponibilidad</span>
                         <span className="inline sm:hidden">Disp.</span>
+                      </th>
+                      <th className="py-3 px-2 sm:py-4 sm:px-6 text-center sticky top-0 z-20 bg-slate-800 text-white border-b border-slate-700 w-[20%] sm:w-[20%]">
+                        <span className="hidden sm:inline">Uso Diario</span>
+                        <span className="inline sm:hidden">Uso D.</span>
                       </th>
                     </tr>
                   </thead>
@@ -6915,7 +6919,7 @@ export default function App() {
                           <React.Fragment key={item.id}>
                             {isFirstRth && (
                               <tr className="bg-purple-950/5 border-y border-purple-200/50">
-                                <td colSpan={3} className="py-3.5 px-6 text-left font-black text-xs text-purple-700 tracking-widest uppercase">
+                                <td colSpan={4} className="py-3.5 px-6 text-left font-black text-xs text-purple-700 tracking-widest uppercase">
                                   ✦ PRODUCTOS RTH (ENTERAL)
                                 </td>
                               </tr>
@@ -6952,7 +6956,7 @@ export default function App() {
                                    {item.unidad || 'Tarro'}
                                  </span>
                                </span>
-                               
+                                
                                {/* Insignia de diferencia en vista histórica */}
                                {isHistoryMode && (item as any).diff !== undefined && (
                                  <span className={`inline-flex items-center gap-0.5 text-[9px] sm:text-xs font-black px-1.5 py-0.5 sm:px-2.5 sm:py-2 rounded-lg sm:rounded-xl border shadow-sm whitespace-nowrap ${
@@ -6998,6 +7002,18 @@ export default function App() {
                                     <span className="inline sm:hidden">{((item.stock_sedile) / item.uso_diario).toFixed(1)} d.</span>
                                   </>
                                 )}
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* Col 4: Uso Diario */}
+                          <td className="py-3 px-2 sm:py-4 sm:px-6 text-center">
+                            <div className="flex items-center justify-center">
+                              <span className="inline-flex flex-col sm:flex-row items-center justify-center text-xs sm:text-base font-black px-2 py-1.5 sm:px-4 sm:py-2 rounded-xl border border-slate-200/80 bg-slate-50 text-slate-800 shadow-sm tracking-wide">
+                                <span>{item.uso_diario ?? 0}</span>
+                                <span className="text-[9px] sm:text-xs font-bold uppercase tracking-wider text-slate-400 mt-0.5 sm:mt-0 sm:ml-1.5">
+                                  {item.unidad ? `${item.unidad}/día` : 'uds/día'}
+                                </span>
                               </span>
                             </div>
                           </td>
