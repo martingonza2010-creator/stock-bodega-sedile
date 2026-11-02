@@ -2398,8 +2398,8 @@ export default function App() {
     const numRows = Math.max(leftItems.length, rightItems.length);
 
     // Configuración de anchos y nombres de columnas (Código es 120px y Producto es 310px)
-    const colWidths = isPublic ? [330, 190, 130] : [120, 310, 120, 110, 100, 190, 190];
-    const colNames = isPublic ? ['Producto', 'Stock Disp.', 'Días SEDILE'] : ['Código', 'Producto', 'Unidad', 'Stock SEDILE', 'Uso Diario', 'Días SEDILE', 'Disp. Hosp.'];
+    const colWidths = isPublic ? [330, 190, 130] : [120, 330, 120, 170, 180, 220];
+    const colNames = isPublic ? ['Producto', 'Stock Disp.', 'Días SEDILE'] : ['Código', 'Producto', 'Unidad', 'Stock SEDILE', 'Bodega Leches', 'Días SEDILE'];
 
     // Crear un canvas temporal para medir texto
     const measureCanvas = document.createElement('canvas');
@@ -2690,21 +2690,17 @@ export default function App() {
               ctx.textAlign = 'center';
               ctx.fillText(item.stock_sedile.toString(), leftXOffset + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] / 2, rowY + h / 2);
 
-              // Uso Diario
-              ctx.fillStyle = '#475569';
-              ctx.font = 'bold 31px system-ui, -apple-system, sans-serif';
+              // Bodega Leches (Stock Bodega Leche)
+              ctx.fillStyle = '#0f172a';
+              ctx.font = 'bold 34px system-ui, -apple-system, sans-serif';
               ctx.textAlign = 'center';
-              ctx.fillText(item.uso_diario.toString(), leftXOffset + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] / 2, rowY + h / 2);
+              const stockBodegaL = (item.stock_bodega_leches ?? 0).toString();
+              ctx.fillText(stockBodegaL, leftXOffset + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] / 2, rowY + h / 2);
 
               // Disponibilidad SEDILE (Badge)
               const xDisp = leftXOffset + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4];
               const dispSedile = item.uso_diario > 0 ? item.stock_sedile / item.uso_diario : -1;
               drawCanvasBadge(ctx, xDisp, rowY, colWidths[5], dispSedile, h);
-
-              // Disponibilidad Hospital (Badge)
-              const xDispHosp = leftXOffset + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5];
-              const dispHosp = item.uso_diario > 0 ? (item.stock_sedile + (item.stock_bodega_leches || 0)) / item.uso_diario : -1;
-              drawCanvasBadge(ctx, xDispHosp, rowY, colWidths[6], dispHosp, h);
             }
           }
         }
@@ -2811,21 +2807,17 @@ export default function App() {
               ctx.textAlign = 'center';
               ctx.fillText(item.stock_sedile.toString(), rightXOffset + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] / 2, rowY + h / 2);
 
-              // Uso Diario
-              ctx.fillStyle = '#475569';
-              ctx.font = 'bold 31px system-ui, -apple-system, sans-serif';
+              // Bodega Leches (Stock Bodega Leche)
+              ctx.fillStyle = '#0f172a';
+              ctx.font = 'bold 34px system-ui, -apple-system, sans-serif';
               ctx.textAlign = 'center';
-              ctx.fillText(item.uso_diario.toString(), rightXOffset + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] / 2, rowY + h / 2);
+              const stockBodegaR = (item.stock_bodega_leches ?? 0).toString();
+              ctx.fillText(stockBodegaR, rightXOffset + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] / 2, rowY + h / 2);
 
               // Disponibilidad SEDILE (Badge)
               const xDisp = rightXOffset + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4];
               const dispSedile = item.uso_diario > 0 ? item.stock_sedile / item.uso_diario : -1;
               drawCanvasBadge(ctx, xDisp, rowY, colWidths[5], dispSedile, h);
-
-              // Disponibilidad Hospital (Badge)
-              const xDispHosp = rightXOffset + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5];
-              const dispHosp = item.uso_diario > 0 ? (item.stock_sedile + (item.stock_bodega_leches || 0)) / item.uso_diario : -1;
-              drawCanvasBadge(ctx, xDispHosp, rowY, colWidths[6], dispHosp, h);
             }
           }
         }
