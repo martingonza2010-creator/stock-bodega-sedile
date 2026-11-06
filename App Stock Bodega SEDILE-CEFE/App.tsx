@@ -3,7 +3,7 @@ import {
   Search, Lock, Unlock, Clipboard, Image as ImageIcon, Plus, Trash2,
   RefreshCw, Check, X, AlertTriangle, AlertCircle, ShieldAlert,
   Database, Wifi, WifiOff, PlusCircle, LogIn, LogOut, CheckCircle, HelpCircle, Eye, EyeOff, History, MoreVertical, Edit3,
-  TrendingUp, ArrowUpDown, Clock, Users, FileText, Copy, Calendar, ChevronDown, Heart
+  TrendingUp, ArrowUpDown, Clock, Users, FileText, Copy, Calendar, ChevronDown, Heart, SlidersHorizontal, Settings
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend,
@@ -415,6 +415,17 @@ export const FORMULA_FORMAT_DATA: Record<FormulaFormat, { label: string; ml: num
   'rth_500ml': { label: 'Bolsa RTH 500 ml', ml: 500, isPowder: false, defaultDil: 100 }
 };
 
+export const detectFormulaFormat = (name: string, unidad?: string): FormulaFormat => {
+  const lower = (name || '').toLowerCase();
+  const uLower = (unidad || '').toLowerCase();
+  if (lower.includes('1000') || lower.includes('1 lt') || lower.includes('1lt') || lower.includes('rth 1000') || uLower.includes('1000ml')) return 'rth_1000ml';
+  if (lower.includes('500') || lower.includes('rth 500') || uLower.includes('500ml')) return 'rth_500ml';
+  if (lower.includes('800g') || lower.includes('800 g') || lower.includes('800') || uLower.includes('800g')) return 'polvo_800g';
+  if (lower.includes('1kg') || lower.includes('1 kg') || lower.includes('1000g') || uLower.includes('1kg')) return 'polvo_1kg';
+  if (lower.includes('botell') || lower.includes('200ml') || lower.includes('200 ml') || lower.includes('237') || lower.includes('tetra') || lower.includes('caja') || uLower.includes('botell')) return 'botellin_200ml';
+  return 'polvo_400g';
+};
+
 export const calculateFormulaYieldMl = (pricing: { formato?: FormulaFormat; dilucion_pct?: number; ml_por_tarro?: number }) => {
   const fmtKey = (pricing.formato || 'polvo_400g') as FormulaFormat;
   const isPowder = fmtKey.startsWith('polvo');
@@ -687,7 +698,11 @@ export default function App() {
   // --- Estados de Costos Financieros ---
   const [showMermasCostModal, setShowMermasCostModal] = useState(false);
   const [showMermasMonthModal, setShowMermasMonthModal] = useState(false);
-  const [mermasCostTab, setMermasCostTab] = useState<'mermas' | 'inventario'>('mermas');
+  const [mermasCostTab, setMermasCostTab] = useState<'metricas' | 'precios'>('metricas');
+  const [costAnalysisMonth, setCostAnalysisMonth] = useState<string>('all');
+  const [expandedPriceSettings, setExpandedPriceSettings] = useState<Record<string, boolean>>({});
+  const [priceCatalogCategory, setPriceCatalogCategory] = useState<string>('Todos');
+  const [priceCatalogSearch, setPriceCatalogSearch] = useState<string>('');
   const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({});
   const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
 
@@ -7673,498 +7688,639 @@ export default function App() {
         </div>
       )}
 
-      {/* --- MODAL DE ANÁLISIS DE COSTOS Y MERMAS --- */}
+      {/* --- MODAL DE ANÁLISIS DE COSTOS Y MERMAS REDISEÑADO Y UNIFICADO --- */}
       {showMermasCostModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] md:max-h-[90vh] overflow-y-auto md:overflow-hidden shadow-2xl border border-slate-200 flex flex-col animate-scale-in">
+          <div className="bg-white rounded-3xl w-full max-w-5xl max-h-[92vh] overflow-hidden shadow-2xl border border-slate-200 flex flex-col animate-scale-in">
             {/* Cabecera */}
-            <div className="bg-gradient-to-r from-purple-800 to-indigo-950 text-white px-6 py-4 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-purple-300" />
-                <h3 className="font-bold text-lg">Análisis de Costos y Pérdidas Financieras</h3>
+            <div className="bg-gradient-to-r from-purple-800 via-indigo-900 to-slate-900 text-white px-6 py-4 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-white/10 rounded-xl">
+                  <TrendingUp className="w-5 h-5 text-purple-300" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base md:text-lg">Análisis de Costos y Pérdidas Financieras</h3>
+                  <p className="text-xs text-purple-200 font-medium">Gestión unificada de precios, consumo diario y pérdidas de mermas</p>
+                </div>
               </div>
               <button
                 onClick={() => setShowMermasCostModal(false)}
-                className="p-1 hover:bg-white/10 rounded-full text-white/80 hover:text-white"
+                className="p-1.5 hover:bg-white/10 rounded-full text-white/80 hover:text-white transition-colors cursor-pointer"
+                title="Cerrar ventana"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Pestañas */}
-            <div className="bg-slate-100 border-b border-slate-200 px-6 py-2 flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => setMermasCostTab('mermas')}
-                className={"px-4 py-2 text-xs font-black rounded-lg transition-all " + (
-                  mermasCostTab === 'mermas'
-                    ? 'bg-white text-purple-700 shadow-sm border border-purple-100'
-                    : 'text-slate-500 hover:text-slate-700'
+            {/* Pestañas Modernas */}
+            <div className="bg-slate-100 border-b border-slate-200 px-6 py-2.5 flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setMermasCostTab('metricas')}
+                  className={"px-4 py-2 text-xs font-black rounded-xl transition-all cursor-pointer flex items-center gap-2 " + (
+                    mermasCostTab === 'metricas'
+                      ? 'bg-white text-purple-800 shadow-sm border border-purple-200'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  )}
+                >
+                  <span>📊</span>
+                  <span>Métricas y Gráficos Financieros</span>
+                </button>
+                <button
+                  onClick={() => setMermasCostTab('precios')}
+                  className={"px-4 py-2 text-xs font-black rounded-xl transition-all cursor-pointer flex items-center gap-2 " + (
+                    mermasCostTab === 'precios'
+                      ? 'bg-white text-purple-800 shadow-sm border border-purple-200'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  )}
+                >
+                  <span>💲</span>
+                  <span>Precios de Productos (Bodega)</span>
+                </button>
+              </div>
+
+              {/* Indicador de pestaña */}
+              <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-500 font-semibold">
+                {mermasCostTab === 'metricas' ? (
+                  <span className="flex items-center gap-1.5 text-purple-700 bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-100 font-bold">
+                    <span>💡</span> Cálculo automático por ml y consumo
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100 font-bold">
+                    <span>🔄</span> Sincronizado en tiempo real
+                  </span>
                 )}
-              >
-                📊 Analíticas y Pérdidas de Mermas
-              </button>
-              <button
-                onClick={() => setMermasCostTab('inventario')}
-                className={"px-4 py-2 text-xs font-black rounded-lg transition-all " + (
-                  mermasCostTab === 'inventario'
-                    ? 'bg-white text-purple-700 shadow-sm border border-purple-100'
-                    : 'text-slate-500 hover:text-slate-700'
-                )}
-              >
-                💰 Costo de Consumo Diario (Precios Tarros)
-              </button>
+              </div>
             </div>
 
-            {/* Contenido */}
+            {/* Contenido Principal */}
             <div className="p-6 overflow-y-auto bg-slate-50 flex-1 flex flex-col gap-6">
-              {mermasCostTab === 'mermas' ? (
-                <div>
-                  {/* Pestaña Mermas */}
-                  {(() => {
-                    const uniqueDates = [...new Set(mermasRecords.map(r => r.fecha))];
-                    const numDays = Math.max(1, uniqueDates.length);
-                    let totalLossQty = 0;
-                    let totalLossCost = 0;
-                    
-                    mermasRecords.forEach(r => {
-                      if (r.motivo !== 'Devolución para reutilizar') {
-                        const parsed = parseMermaRecord(r);
-                        totalLossQty += parsed.isLiquid ? 1 : (r.cantidad || 0);
-                        totalLossCost += getMermaCost(r, formulaPricings);
+              {mermasCostTab === 'metricas' ? (
+                /* --- PESTAÑA 1: MÉTRICAS Y GRÁFICOS FINANCIEROS --- */
+                (() => {
+                  // Filtrar mermas según mes seleccionado
+                  const isSpecificMonth = costAnalysisMonth !== 'all';
+                  const filteredMermas = isSpecificMonth
+                    ? mermasRecords.filter(r => getMonthYearKey(r.fecha) === costAnalysisMonth)
+                    : mermasRecords;
+
+                  const uniqueDates = [...new Set(filteredMermas.map(r => r.fecha))];
+                  const numDays = Math.max(1, uniqueDates.length);
+                  let totalLossQty = 0;
+                  let totalLossCost = 0;
+
+                  filteredMermas.forEach(r => {
+                    if (r.motivo !== 'Devolución para reutilizar') {
+                      const parsed = parseMermaRecord(r);
+                      totalLossQty += parsed.isLiquid ? 0 : (r.cantidad || 0);
+                      totalLossCost += getMermaCost(r, formulaPricings);
+                    }
+                  });
+
+                  const avgLossCost = totalLossCost / numDays;
+                  const monthlyLossProj = avgLossCost * 30;
+
+                  // Pérdidas por motivo
+                  const motivoCostMap: Record<string, number> = {};
+                  filteredMermas.forEach(r => {
+                    if (r.motivo !== 'Devolución para reutilizar') {
+                      const cost = getMermaCost(r, formulaPricings);
+                      motivoCostMap[r.motivo] = (motivoCostMap[r.motivo] || 0) + cost;
+                    }
+                  });
+                  const motivoChartDataList = Object.keys(motivoCostMap).map(k => ({
+                    name: k,
+                    value: motivoCostMap[k]
+                  })).sort((a, b) => b.value - a.value);
+
+                  // Suplemento más mermado en el período
+                  const supplementLosses: Record<string, number> = {};
+                  filteredMermas.forEach(r => {
+                    if (r.motivo !== 'Devolución para reutilizar') {
+                      const parsed = parseMermaRecord(r);
+                      if (parsed.isLiquid && parsed.supplementName) {
+                        const name = parsed.supplementName;
+                        supplementLosses[name] = (supplementLosses[name] || 0) + (r.cantidad || 0);
                       }
-                    });
-                    
-                    const avgLossCost = totalLossCost / numDays;
-                    const monthlyLossProj = avgLossCost * 30;
+                    }
+                  });
 
-                    const motivoCostDataMap = {};
-                    mermasRecords.forEach(r => {
-                      if (r.motivo !== 'Devolución para reutilizar') {
-                        const cost = getMermaCost(r, formulaPricings);
-                        motivoCostDataMap[r.motivo] = (motivoCostDataMap[r.motivo] || 0) + cost;
-                      }
-                    });
-                    const motivoChartDataList = Object.keys(motivoCostDataMap).map(k => ({
-                      name: k,
-                      value: motivoCostDataMap[k]
-                    }));
+                  let mostMermadoName = 'Ninguno';
+                  let mostMermadoVol = 0;
+                  Object.keys(supplementLosses).forEach(name => {
+                    if (supplementLosses[name] > mostMermadoVol) {
+                      mostMermadoVol = supplementLosses[name];
+                      mostMermadoName = name;
+                    }
+                  });
 
-                    return (
-                      <div className="flex flex-col gap-6">
-                        {/* Calcular suplemento más mermado */}
-                        {(() => {
-                          const supplementLosses = {};
-                          mermasRecords.forEach(r => {
-                            if (r.motivo !== 'Devolución para reutilizar') {
-                              const parsed = parseMermaRecord(r);
-                              if (parsed.isLiquid && parsed.supplementName) {
-                                const name = parsed.supplementName;
-                                supplementLosses[name] = (supplementLosses[name] || 0) + (r.cantidad || 0);
-                              }
-                            }
-                          });
-                          
-                          let mostMermadoName = 'Ninguno';
-                          let mostMermadoVol = 0;
-                          Object.keys(supplementLosses).forEach(name => {
-                            if (supplementLosses[name] > mostMermadoVol) {
-                              mostMermadoVol = supplementLosses[name];
-                              mostMermadoName = name;
-                            }
-                          });
+                  // Consumo diario de bodega (activo)
+                  const activeProducts = items.filter(item => !item.oculto);
+                  let totalDailyExpenditure = 0;
+                  activeProducts.forEach(item => {
+                    const price = formulaPricings[item.nombre]?.precio_tarro || formulaPricings[item.id]?.precio_tarro || productPrices[item.id] || 0;
+                    totalDailyExpenditure += (item.uso_diario || 0) * price;
+                  });
+                  const monthlyExpenditureProj = totalDailyExpenditure * 30;
 
-                          return (
-                            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-                              <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-sm">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Pérdida Financiera Acumulada</span>
-                                <h3 className="text-2xl font-black text-rose-600 mt-1">$ {totalLossCost.toLocaleString('es-CL')}</h3>
-                                <p className="text-[10px] text-slate-400 mt-0.5">Basado en {totalLossQty} unidades de merma real.</p>
-                              </div>
+                  // Top 5 mayor gasto diario
+                  const topSpendProducts = activeProducts
+                    .map(item => {
+                      const price = formulaPricings[item.nombre]?.precio_tarro || formulaPricings[item.id]?.precio_tarro || productPrices[item.id] || 0;
+                      return {
+                        name: item.nombre.length > 16 ? item.nombre.substring(0, 14) + '...' : item.nombre,
+                        fullName: item.nombre,
+                        gasto: (item.uso_diario || 0) * price
+                      };
+                    })
+                    .filter(entry => entry.gasto > 0)
+                    .sort((a, b) => b.gasto - a.gasto)
+                    .slice(0, 5);
 
-                              <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-sm">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Costo Pérdida Diario Promedio</span>
-                                <h3 className="text-2xl font-black text-slate-800 mt-1">$ {Math.round(avgLossCost).toLocaleString('es-CL')}</h3>
-                                <p className="text-[10px] text-slate-400 mt-0.5">Calculado sobre {numDays} días de bitácora.</p>
-                              </div>
-
-                              <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-sm">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Proyección Pérdida Mensual</span>
-                                <h3 className={"text-2xl font-black mt-1 " + (monthlyLossProj > 136000 ? 'text-red-700' : 'text-slate-800')}>
-                                  $ {Math.round(monthlyLossProj).toLocaleString('es-CL')}
-                                </h3>
-                                <p className="text-[10px] text-slate-400 mt-0.5">Referencia manual histórica: $136.000/mes.</p>
-                              </div>
-
-                              <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-sm">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Suplemento Más Mermado</span>
-                                <h3 className="text-xl font-black text-purple-700 mt-1 truncate" title={mostMermadoName}>{mostMermadoName}</h3>
-                                <p className="text-[10px] text-slate-400 mt-0.5">{mostMermadoVol > 0 ? ("Volumen total: " + mostMermadoVol + " cc") : "Sin mermas registradas"}</p>
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                          {/* Gráfico circular de costos */}
-                          <div className="lg:col-span-7 bg-white p-5 rounded-2xl border border-slate-200/60 shadow-sm flex flex-col gap-3">
-                            <h4 className="font-bold text-xs text-slate-700 uppercase tracking-tight">Distribución de Pérdidas por Motivo ($)</h4>
-                            {totalLossCost === 0 ? (
-                              <div className="h-56 flex items-center justify-center text-xs font-semibold text-slate-400 border border-dashed border-slate-200 rounded-xl bg-slate-50">
-                                Sin registros de pérdida real para graficar.
-                              </div>
-                            ) : (
-                              <div className="h-56 w-full flex flex-col sm:flex-row items-center justify-center gap-6">
-                                <div className="h-44 w-44 shrink-0">
-                                  <ResponsiveContainer width="100%" height="100%">
-                                    <PieChart>
-                                      <Pie
-                                        data={motivoChartDataList}
-                                        cx="50%"
-                                        cy="50%"
-                                        innerRadius={45}
-                                        outerRadius={60}
-                                        paddingAngle={2}
-                                        dataKey="value"
-                                      >
-                                        {motivoChartDataList.map((entry, index) => (
-                                          <Cell key={"cell-" + index} fill={getMotivoColor(entry.name)} />
-                                        ))}
-                                      </Pie>
-                                      <Tooltip formatter={(value) => [`$${Number(value).toLocaleString('es-CL')}`, 'Costo Merma']} />
-                                    </PieChart>
-                                  </ResponsiveContainer>
-                                </div>
-                                <div className="space-y-1 mt-1 text-[9px] font-semibold">
-                                  {motivoChartDataList.map((entry) => (
-                                    <div key={entry.name} className="flex items-center justify-between border-b border-slate-100 pb-1">
-                                      <div className="flex items-center gap-1.5 truncate max-w-[170px]">
-                                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: MOTIVO_COLORS[entry.name] }}></span>
-                                        <span className="text-slate-500 truncate">{entry.name}</span>
-                                      </div>
-                                      <span className="text-slate-800 font-bold">$ {entry.value.toLocaleString('es-CL')}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
+                  return (
+                    <div className="flex flex-col gap-6">
+                      {/* Barra Superior con Selector de Período */}
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div className="flex items-center gap-3 w-full sm:w-auto">
+                          <div className="p-2 bg-purple-50 text-purple-700 rounded-xl">
+                            <Calendar className="w-4 h-4" />
                           </div>
-
-                          {/* Inputs de costos de Fórmulas y Suplementos */}
-                          <div className="lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200/60 shadow-sm flex flex-col gap-3.5 max-h-[500px] overflow-hidden">
-                            <div className="flex flex-col gap-1 border-b border-slate-100 pb-2.5">
-                              <div className="flex items-center justify-between">
-                                <h4 className="font-bold text-xs text-slate-700 uppercase tracking-tight flex items-center gap-1.5">
-                                  <span>🍼</span>
-                                  <span>Precios de Fórmulas y Suplementos</span>
-                                </h4>
-                                <span className="text-[9px] bg-purple-100 text-purple-800 font-bold px-2 py-0.5 rounded-full">
-                                  {Object.keys(formulaPricings).length} fórmulas
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Buscador */}
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="text"
-                                placeholder="🔍 Filtrar fórmula o suplemento..."
-                                value={formulaSearchTerm}
-                                onChange={(e) => setFormulaSearchTerm(e.target.value)}
-                                className="w-full px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
-                              />
-                            </div>
-
-                            {/* Lista de fórmulas configurables */}
-                            <div className="space-y-2.5 overflow-y-auto pr-1 flex-1">
-                              {Object.keys(formulaPricings)
-                                .filter(key => !formulaSearchTerm.trim() || key.toLowerCase().includes(formulaSearchTerm.toLowerCase()))
-                                .map((key) => {
-                                  const item = formulaPricings[key] || { precio_tarro: 0, formato: 'polvo_400g', dilucion_pct: 14, ml_por_tarro: 2857 };
-                                  const fmtKey = (item.formato || 'polvo_400g') as FormulaFormat;
-                                  const fmtData = FORMULA_FORMAT_DATA[fmtKey] || FORMULA_FORMAT_DATA['polvo_400g'];
-                                  const isPowder = fmtData.isPowder;
-                                  const dilVal = item.dilucion_pct || fmtData.defaultDil;
-                                  const totalMlYield = calculateFormulaYieldMl({ formato: fmtKey, dilucion_pct: dilVal });
-                                  const costPerMl = (item.precio_tarro || 0) / Math.max(1, totalMlYield);
-
-                                  return (
-                                    <div key={key} className="p-2.5 bg-slate-50/70 border border-slate-200/80 rounded-xl space-y-2 hover:bg-slate-100/50 transition-colors">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <strong className="text-xs text-slate-800 font-bold truncate" title={key}>{key}</strong>
-                                        <div className="flex items-center gap-1.5 shrink-0">
-                                          <span className="text-[8.5px] text-slate-400 font-semibold font-mono">
-                                            ({totalMlYield.toLocaleString('es-CL')} ml)
-                                          </span>
-                                          <span className="text-[9.5px] font-mono font-black text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100">
-                                            ${costPerMl.toFixed(2)} / ml
-                                          </span>
-                                        </div>
-                                      </div>
-
-                                      <div className={`grid ${isPowder ? 'grid-cols-3' : 'grid-cols-2'} gap-2 text-[10px]`}>
-                                        <div>
-                                          <span className="text-slate-400 font-semibold block text-[8.5px] uppercase">Precio Tarro</span>
-                                          <div className="relative mt-0.5">
-                                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 font-bold font-mono">$</span>
-                                            <input
-                                              type="number"
-                                              min="0"
-                                              value={item.precio_tarro || ''}
-                                              placeholder="Ej: 55000"
-                                              onChange={(e) => {
-                                                const val = Math.max(0, Number(e.target.value) || 0);
-                                                setFormulaPricings(prev => {
-                                                  const updated = {
-                                                    ...prev,
-                                                    [key]: {
-                                                      ...prev[key],
-                                                      precio_tarro: val,
-                                                      formato: prev[key]?.formato || 'polvo_400g',
-                                                      dilucion_pct: prev[key]?.dilucion_pct || fmtData.defaultDil,
-                                                      ml_por_tarro: totalMlYield
-                                                    }
-                                                  };
-                                                  try {
-                                                    localStorage.setItem('formula_pricings_v2', JSON.stringify(updated));
-                                                  } catch (err) {}
-                                                  return updated;
-                                                });
-                                              }}
-                                              className="w-full pl-5 pr-1.5 py-1 bg-white border border-slate-200 rounded-lg font-bold text-slate-700 font-mono text-right focus:outline-none focus:ring-1 focus:ring-purple-500 text-[10px]"
-                                            />
-                                          </div>
-                                        </div>
-
-                                        <div>
-                                          <span className="text-slate-400 font-semibold block text-[8.5px] uppercase">Formato</span>
-                                          <select
-                                            value={fmtKey}
-                                            onChange={(e) => {
-                                              const newFmt = e.target.value as FormulaFormat;
-                                              const newFmtData = FORMULA_FORMAT_DATA[newFmt] || FORMULA_FORMAT_DATA['polvo_400g'];
-                                              const newDil = newFmtData.defaultDil;
-                                              const newYield = calculateFormulaYieldMl({ formato: newFmt, dilucion_pct: newDil });
-                                              setFormulaPricings(prev => {
-                                                const updated = {
-                                                  ...prev,
-                                                  [key]: {
-                                                    precio_tarro: prev[key]?.precio_tarro || 0,
-                                                    formato: newFmt,
-                                                    dilucion_pct: newDil,
-                                                    ml_por_tarro: newYield
-                                                  }
-                                                };
-                                                try {
-                                                  localStorage.setItem('formula_pricings_v2', JSON.stringify(updated));
-                                                } catch (err) {}
-                                                return updated;
-                                              });
-                                            }}
-                                            className="w-full mt-0.5 px-1.5 py-1 bg-white border border-slate-200 rounded-lg font-bold text-slate-700 text-[9px] focus:outline-none focus:ring-1 focus:ring-purple-500"
-                                          >
-                                            {Object.keys(FORMULA_FORMAT_DATA).map(fKey => (
-                                              <option key={fKey} value={fKey}>
-                                                {FORMULA_FORMAT_DATA[fKey as FormulaFormat].label}
-                                              </option>
-                                            ))}
-                                          </select>
-                                        </div>
-
-                                        {isPowder && (
-                                          <div>
-                                            <span className="text-purple-600 font-semibold block text-[8.5px] uppercase">Dilución (%)</span>
-                                            <div className="relative mt-0.5">
-                                              <input
-                                                type="number"
-                                                min="5"
-                                                max="30"
-                                                step="0.5"
-                                                value={dilVal}
-                                                placeholder="14"
-                                                onChange={(e) => {
-                                                  const val = Math.max(1, Number(e.target.value) || 14);
-                                                  const newYield = calculateFormulaYieldMl({ formato: fmtKey, dilucion_pct: val });
-                                                  setFormulaPricings(prev => {
-                                                    const updated = {
-                                                      ...prev,
-                                                      [key]: {
-                                                        ...prev[key],
-                                                        precio_tarro: prev[key]?.precio_tarro || 0,
-                                                        formato: fmtKey,
-                                                        dilucion_pct: val,
-                                                        ml_por_tarro: newYield
-                                                      }
-                                                    };
-                                                    try {
-                                                      localStorage.setItem('formula_pricings_v2', JSON.stringify(updated));
-                                                    } catch (err) {}
-                                                    return updated;
-                                                  });
-                                                }}
-                                                className="w-full pr-5 pl-1.5 py-1 bg-purple-50/50 border border-purple-200 rounded-lg font-black text-purple-900 font-mono text-right focus:outline-none focus:ring-1 focus:ring-purple-500 text-[10px]"
-                                              />
-                                              <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-purple-500 font-bold text-[9px]">%</span>
-                                            </div>
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                            </div>
-
-                            {/* Agregar nueva fórmula personalizada */}
-                            <div className="flex items-center gap-1.5 pt-2 border-t border-slate-100 shrink-0">
-                              <input
-                                type="text"
-                                placeholder="+ Agregar fórmula/suplemento..."
-                                value={newFormulaInput}
-                                onChange={(e) => setNewFormulaInput(e.target.value)}
-                                className="flex-1 px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none"
-                              />
-                              <button
-                                onClick={() => {
-                                  if (!newFormulaInput.trim()) return;
-                                  const name = newFormulaInput.trim();
-                                  setFormulaPricings(prev => {
-                                    const updated = {
-                                      ...prev,
-                                      [name]: { precio_tarro: 10000, ml_por_tarro: 2800 }
-                                    };
-                                    try {
-                                      localStorage.setItem('formula_pricings_v2', JSON.stringify(updated));
-                                    } catch (err) {}
-                                    return updated;
-                                  });
-                                  setNewFormulaInput('');
-                                  showToast(`Fórmula "${name}" agregada a la lista de precios`, "success");
-                                }}
-                                className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold text-xs border-none cursor-pointer"
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                              Período de Análisis de Mermas
+                            </span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <select
+                                value={costAnalysisMonth}
+                                onChange={(e) => setCostAnalysisMonth(e.target.value)}
+                                className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-black text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/20 cursor-pointer"
                               >
-                                Agregar
-                              </button>
+                                <option value="all">🌐 Histórico Completo (Todos los meses)</option>
+                                {availableMermasMonths.map(m => (
+                                  <option key={m.monthKey} value={m.monthKey}>
+                                    📅 {m.monthKey} ({m.recordCount} registros)
+                                  </option>
+                                ))}
+                              </select>
                             </div>
                           </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="px-3 py-1.5 bg-purple-50 text-purple-700 font-bold rounded-xl border border-purple-100">
+                            {isSpecificMonth
+                              ? `${costAnalysisMonth} • ${filteredMermas.length} eventos`
+                              : `Histórico • ${filteredMermas.length} eventos totales`}
+                          </span>
                         </div>
                       </div>
-                    );
-                  })()}
-                </div>
-              ) : (
-                <div>
-                  {/* Pestaña Inventario */}
-                  {(() => {
-                    const activeProducts = getFilteredItems().filter(item => !item.oculto);
-                    let totalDailyExpenditure = 0;
-                    activeProducts.forEach(item => {
-                      const price = productPrices[item.id] || 0;
-                      totalDailyExpenditure += item.uso_diario * price;
-                    });
-                    const monthlyExpenditureProj = totalDailyExpenditure * 30;
 
-                    const dailySpendDataList = activeProducts
-                      .map(item => {
-                        const price = productPrices[item.id] || 0;
-                        return {
-                          name: item.nombre.length > 15 ? item.nombre.substring(0, 12) + '...' : item.nombre,
-                          fullName: item.nombre,
-                          gasto: item.uso_diario * price
-                        };
-                      })
-                      .filter(entry => entry.gasto > 0)
-                      .sort((a, b) => b.gasto - a.gasto)
-                      .slice(0, 5);
+                      {/* Tarjetas KPI Superiores */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        {/* KPI 1: Pérdida por mermas */}
+                        <div className="bg-white p-4 rounded-2xl border border-rose-100 shadow-sm hover:shadow-md transition-shadow">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              Pérdida por Mermas ({isSpecificMonth ? 'Mes' : 'Total'})
+                            </span>
+                            <span className="text-xs">📉</span>
+                          </div>
+                          <h3 className="text-2xl font-black text-rose-600 mt-1">
+                            $ {totalLossCost.toLocaleString('es-CL')}
+                          </h3>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            {totalLossQty} uds. desperdiciadas • Prom: $ {Math.round(avgLossCost).toLocaleString('es-CL')}/día
+                          </p>
+                        </div>
 
-                    return (
-                      <div className="flex flex-col gap-6">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-sm text-center">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Costo Consumo Diario Total Bodega</span>
-                            <h3 className="text-2xl font-black text-indigo-800 mt-1">$ {Math.round(totalDailyExpenditure).toLocaleString('es-CL')}</h3>
-                            <p className="text-[10px] text-slate-400 mt-0.5">Suma de consumo diario * precio asignado en inventario activo.</p>
+                        {/* KPI 2: Proyección mensual */}
+                        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              Proyección Pérdida Mensual
+                            </span>
+                            <span className="text-xs">📅</span>
+                          </div>
+                          <h3 className="text-2xl font-black text-slate-800 mt-1">
+                            $ {Math.round(monthlyLossProj).toLocaleString('es-CL')}
+                          </h3>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            Estimado sobre {numDays} día(s) con bitácora
+                          </p>
+                        </div>
+
+                        {/* KPI 3: Consumo Diario Bodega */}
+                        <div className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-sm hover:shadow-md transition-shadow">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              Costo Consumo Diario Bodega
+                            </span>
+                            <span className="text-xs">📦</span>
+                          </div>
+                          <h3 className="text-2xl font-black text-indigo-700 mt-1">
+                            $ {Math.round(totalDailyExpenditure).toLocaleString('es-CL')}
+                          </h3>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            Gasto mensual proyectado: $ {Math.round(monthlyExpenditureProj).toLocaleString('es-CL')}
+                          </p>
+                        </div>
+
+                        {/* KPI 4: Suplemento más mermado */}
+                        <div className="bg-white p-4 rounded-2xl border border-purple-100 shadow-sm hover:shadow-md transition-shadow">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              Suplemento Más Mermado
+                            </span>
+                            <span className="text-xs">🍼</span>
+                          </div>
+                          <h3 className="text-xl font-black text-purple-700 mt-1 truncate" title={mostMermadoName}>
+                            {mostMermadoName}
+                          </h3>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            {mostMermadoVol > 0 ? `${mostMermadoVol} cc mermados en período` : 'Sin pérdidas líquidas'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Gráficos Integrados en Paralelo */}
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        {/* Gráfico 1: Pérdidas de mermas por motivo */}
+                        <div className="lg:col-span-6 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col gap-3">
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                            <h4 className="font-bold text-xs text-slate-700 uppercase tracking-tight flex items-center gap-1.5">
+                              <span>🥧</span>
+                              <span>Pérdidas de Mermas por Motivo ($)</span>
+                            </h4>
+                            <span className="text-[10px] text-slate-400 font-bold">
+                              Total: $ {totalLossCost.toLocaleString('es-CL')}
+                            </span>
                           </div>
 
-                          <div className="bg-white p-4 rounded-2xl border border-slate-200/60 shadow-sm text-center">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Gasto Mensual Estimado Consumo</span>
-                            <h3 className="text-2xl font-black text-slate-800 mt-1">$ {Math.round(monthlyExpenditureProj).toLocaleString('es-CL')}</h3>
-                            <p className="text-[10px] text-slate-400 mt-0.5">Consumo total estimado para un ciclo de 30 días.</p>
+                          {totalLossCost === 0 ? (
+                            <div className="h-60 flex items-center justify-center text-xs font-semibold text-slate-400 border border-dashed border-slate-200 rounded-xl bg-slate-50">
+                              Sin registros de pérdida de mermas para este período.
+                            </div>
+                          ) : (
+                            <div className="h-60 flex flex-col sm:flex-row items-center justify-center gap-4">
+                              <div className="h-44 w-44 shrink-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <PieChart>
+                                    <Pie
+                                      data={motivoChartDataList}
+                                      cx="50%"
+                                      cy="50%"
+                                      innerRadius={42}
+                                      outerRadius={58}
+                                      paddingAngle={2}
+                                      dataKey="value"
+                                    >
+                                      {motivoChartDataList.map((entry, index) => (
+                                        <Cell key={"cell-" + index} fill={getMotivoColor(entry.name)} />
+                                      ))}
+                                    </Pie>
+                                    <Tooltip formatter={(value) => ["$" + Number(value).toLocaleString('es-CL'), 'Pérdida']} />
+                                  </PieChart>
+                                </ResponsiveContainer>
+                              </div>
+                              <div className="space-y-1.5 overflow-y-auto max-h-48 flex-1 pr-1 text-[10px]">
+                                {motivoChartDataList.map((entry) => (
+                                  <div key={entry.name} className="flex items-center justify-between border-b border-slate-50 pb-1">
+                                    <div className="flex items-center gap-1.5 truncate max-w-[130px]">
+                                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: getMotivoColor(entry.name) }}></span>
+                                      <span className="text-slate-600 font-medium truncate" title={entry.name}>{entry.name}</span>
+                                    </div>
+                                    <span className="text-slate-800 font-mono font-bold">$ {entry.value.toLocaleString('es-CL')}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Gráfico 2: Top Fórmulas con mayor gasto diario */}
+                        <div className="lg:col-span-6 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col gap-3">
+                          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                            <h4 className="font-bold text-xs text-slate-700 uppercase tracking-tight flex items-center gap-1.5">
+                              <span>📊</span>
+                              <span>Top Fórmulas de Mayor Gasto Diario en Bodega</span>
+                            </h4>
+                            <span className="text-[10px] text-indigo-600 font-bold">
+                              Consumo Activo
+                            </span>
+                          </div>
+
+                          {topSpendProducts.length === 0 ? (
+                            <div className="h-60 flex items-center justify-center text-xs font-semibold text-slate-400 border border-dashed border-slate-200 rounded-xl bg-slate-50">
+                              Asigna precios a los productos en la pestaña 'Precios de Productos' para ver el gasto diario.
+                            </div>
+                          ) : (
+                            <div className="h-60">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={topSpendProducts} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+                                  <XAxis dataKey="name" tick={{ fontSize: 9 }} angle={-15} textAnchor="end" />
+                                  <YAxis tick={{ fontSize: 9 }} />
+                                  <Tooltip formatter={(value) => ["$ " + Number(value).toLocaleString('es-CL'), 'Gasto Diario']} />
+                                  <Bar dataKey="gasto" fill="#6366f1" radius={[4, 4, 0, 0]}>
+                                    {topSpendProducts.map((entry, idx) => (
+                                      <Cell key={"bar-" + idx} fill={idx === 0 ? '#4f46e5' : idx === 1 ? '#6366f1' : '#818cf8'} />
+                                    ))}
+                                  </Bar>
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : (
+                /* --- PESTAÑA 2: CATÁLOGO UNIFICADO DE PRECIOS DE PRODUCTOS --- */
+                (() => {
+                  const activeProducts = items.filter(item => !item.oculto);
+
+                  // Filtrado por categoría y término de búsqueda
+                  const filteredProducts = activeProducts.filter(item => {
+                    const matchesCategory = priceCatalogCategory === 'Todos' || item.categoria === priceCatalogCategory;
+                    const matchesSearch = !priceCatalogSearch.trim() ||
+                      item.nombre.toLowerCase().includes(priceCatalogSearch.toLowerCase()) ||
+                      item.categoria.toLowerCase().includes(priceCatalogSearch.toLowerCase());
+                    return matchesCategory && matchesSearch;
+                  });
+
+                  const pricedCount = activeProducts.filter(item => {
+                    const price = formulaPricings[item.nombre]?.precio_tarro || formulaPricings[item.id]?.precio_tarro || productPrices[item.id] || 0;
+                    return price > 0;
+                  }).length;
+
+                  // Función auxiliar para actualizar precio de forma unificada
+                  const handleUpdatePrice = (item: StockItem, price: number, format?: FormulaFormat, dil?: number) => {
+                    setProductPrices(prev => {
+                      const updated = { ...prev, [item.id]: price };
+                      try { localStorage.setItem('product_prices', JSON.stringify(updated)); } catch (e) {}
+                      return updated;
+                    });
+
+                    setFormulaPricings(prev => {
+                      const existing = prev[item.nombre] || prev[item.id] || {};
+                      const fmt = format || existing.formato || detectFormulaFormat(item.nombre, item.unidad);
+                      const defaultDil = FORMULA_FORMAT_DATA[fmt]?.defaultDil || 14;
+                      const dilution = dil !== undefined ? dil : (existing.dilucion_pct !== undefined ? existing.dilucion_pct : defaultDil);
+                      const yieldMl = calculateFormulaYieldMl({ formato: fmt, dilucion_pct: dilution });
+
+                      const updatedPricing: FormulaPricing = {
+                        precio_tarro: price,
+                        formato: fmt,
+                        dilucion_pct: dilution,
+                        ml_por_tarro: yieldMl
+                      };
+
+                      const next = {
+                        ...prev,
+                        [item.nombre]: updatedPricing,
+                        [item.id]: updatedPricing
+                      };
+
+                      try {
+                        localStorage.setItem('formula_pricings_v2', JSON.stringify(next));
+                      } catch (e) {}
+
+                      if (isConfigured) {
+                        supabase
+                          .from('config_sedile')
+                          .upsert({ key: 'formula_pricings_v2', value: next, updated_at: new Date().toISOString() })
+                          .then(({ error }) => {
+                            if (error) console.warn("Aviso al sincronizar formula_pricings_v2:", error.message);
+                          });
+                      }
+
+                      return next;
+                    });
+                  };
+
+                  return (
+                    <div className="flex flex-col gap-4">
+                      {/* Banner Explicativo */}
+                      <div className="bg-gradient-to-r from-purple-50 via-indigo-50 to-blue-50 border border-purple-200/70 p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-purple-600 text-white flex items-center justify-center font-bold text-lg shadow-sm">
+                            💲
+                          </div>
+                          <div>
+                            <h4 className="font-black text-slate-800 text-sm">
+                              Catálogo Unificado de Precios de Bodega
+                            </h4>
+                            <p className="text-xs text-slate-500 font-medium">
+                              Ingresa el valor de compra del tarro/envase. El sistema calcula automáticamente el gasto diario de bodega y el costo por ml para las mermas.
+                            </p>
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                          {/* Gráfico de Barras Top 5 mayor gasto */}
-                          <div className="lg:col-span-6 bg-white p-5 rounded-2xl border border-slate-200/60 shadow-sm flex flex-col gap-3">
-                            <h4 className="font-bold text-xs text-slate-700 uppercase tracking-tight">Top 5 Fórmulas de Mayor Gasto Diario ($)</h4>
-                            {dailySpendDataList.length === 0 ? (
-                              <div className="h-72 flex items-center justify-center text-xs font-semibold text-slate-400 border border-dashed border-slate-200 rounded-xl bg-slate-50">
-                                Asigna precios a los tarros en la tabla contigua para ver el gráfico.
-                              </div>
-                            ) : (
-                              <div className="h-72">
-                                <ResponsiveContainer width="100%" height="100%">
-                                  <BarChart data={dailySpendDataList} margin={{ top: 15, right: 10, left: 10, bottom: 5 }}>
-                                    <XAxis dataKey="name" tick={{ fontSize: 9 }} />
-                                    <YAxis tick={{ fontSize: 9 }} />
-                                    <Tooltip formatter={(value) => ["$ " + value.toLocaleString('es-CL'), 'Gasto Diario']} />
-                                    <Bar dataKey="gasto" fill="#4f46e5" radius={[4, 4, 0, 0]}>
-                                      {dailySpendDataList.map((entry, idx) => (
-                                        <Cell key={"cell-" + idx} fill={idx === 0 ? '#4f46e5' : idx === 1 ? '#6366f1' : '#818cf8'} />
-                                      ))}
-                                    </Bar>
-                                  </BarChart>
-                                </ResponsiveContainer>
-                              </div>
-                            )}
-                          </div>
+                        <span className="px-3 py-1 bg-white text-purple-700 font-bold text-xs rounded-xl border border-purple-200 shadow-xs shrink-0">
+                          {pricedCount} de {activeProducts.length} productos con precio
+                        </span>
+                      </div>
 
-                          {/* Listado de precios de tarros */}
-                          <div className="lg:col-span-6 bg-white p-5 rounded-2xl border border-slate-200/60 shadow-sm flex flex-col gap-4">
-                            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                              <h4 className="font-bold text-xs text-slate-700 uppercase tracking-tight">Precios de Fórmulas y Tarros</h4>
-                              <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold">Consumo Activo</span>
-                            </div>
-                            <div className="overflow-y-auto max-h-[300px] divide-y divide-slate-100 pr-1">
-                              {activeProducts.map((item) => {
-                                const price = productPrices[item.id] || 0;
-                                const spend = item.uso_diario * price;
-                                return (
-                                  <div key={item.id} className="py-2.5 flex items-center justify-between gap-4 text-xs">
-                                    <div className="flex flex-col gap-0.5 truncate">
-                                      <span className="text-slate-800 font-bold truncate">{item.nombre}</span>
-                                      <span className="text-[10px] text-slate-400 font-medium">Uso: {item.uso_diario} {item.unidad}/día • Gasto: $ {spend.toLocaleString('es-CL')}/día</span>
+                      {/* Barra de Búsqueda y Filtros de Categoría */}
+                      <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+                        <div className="relative w-full sm:w-80">
+                          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            placeholder="Buscar fórmula o suplemento..."
+                            value={priceCatalogSearch}
+                            onChange={(e) => setPriceCatalogSearch(e.target.value)}
+                            className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                          />
+                        </div>
+
+                        {/* Pills de Categorías */}
+                        <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
+                          {CATEGORIES.map(cat => (
+                            <button
+                              key={cat}
+                              type="button"
+                              onClick={() => setPriceCatalogCategory(cat)}
+                              className={"px-3 py-1 text-[11px] font-bold rounded-lg transition-all shrink-0 cursor-pointer " + (
+                                priceCatalogCategory === cat
+                                  ? 'bg-purple-600 text-white shadow-xs'
+                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                              )}
+                            >
+                              {cat}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Lista Ágil de Productos */}
+                      <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
+                        {filteredProducts.length === 0 ? (
+                          <div className="p-8 text-center bg-white border border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs font-medium">
+                            No se encontraron productos coincidentes con los filtros.
+                          </div>
+                        ) : (
+                          filteredProducts.map(item => {
+                            const pricing = formulaPricings[item.nombre] || formulaPricings[item.id] || {};
+                            const currentPrice = pricing.precio_tarro || productPrices[item.id] || 0;
+                            const currentFmt = (pricing.formato || detectFormulaFormat(item.nombre, item.unidad)) as FormulaFormat;
+                            const currentFmtData = FORMULA_FORMAT_DATA[currentFmt] || FORMULA_FORMAT_DATA['polvo_400g'];
+                            const isPowder = currentFmtData.isPowder;
+                            const currentDil = pricing.dilucion_pct !== undefined ? pricing.dilucion_pct : currentFmtData.defaultDil;
+                            const currentYield = calculateFormulaYieldMl({ formato: currentFmt, dilucion_pct: currentDil });
+                            const costPerMl = currentPrice > 0 ? (currentPrice / Math.max(1, currentYield)) : 0;
+                            const isSettingsOpen = !!expandedPriceSettings[item.id];
+                            const dailySpend = (item.uso_diario || 0) * currentPrice;
+
+                            return (
+                              <div
+                                key={item.id}
+                                className="bg-white border border-slate-200/90 hover:border-purple-300 rounded-2xl p-3.5 shadow-xs hover:shadow-sm transition-all flex flex-col gap-2.5"
+                              >
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                  {/* Columna Izquierda: Identificación del Producto */}
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center font-bold text-sm shrink-0">
+                                      🍼
                                     </div>
-                                    <div className="relative w-28 shrink-0">
-                                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold font-mono">$</span>
+                                    <div>
+                                      <div className="flex items-center gap-2">
+                                        <h5 className="font-bold text-slate-800 text-xs sm:text-sm">
+                                          {item.nombre}
+                                        </h5>
+                                        <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-bold">
+                                          {item.categoria}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400 font-medium">
+                                        <span>Uso: <strong className="text-slate-600">{item.uso_diario} {item.unidad}/día</strong></span>
+                                        <span>•</span>
+                                        <span>Gasto diario: <strong className="text-indigo-600 font-mono">${Math.round(dailySpend).toLocaleString('es-CL')}/día</strong></span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Columna Derecha: Rendimiento + Input de Precio + Botón de Opciones */}
+                                  <div className="flex items-center justify-end gap-3 shrink-0">
+                                    {/* Indicadores de Rendimiento */}
+                                    <div className="text-right">
+                                      <div className="flex items-center justify-end gap-1.5">
+                                        <span className="text-[9px] text-slate-400 font-semibold">
+                                          {currentFmtData.label}
+                                        </span>
+                                        <span className="text-[10px] font-black text-purple-700 font-mono bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100">
+                                          {costPerMl > 0 ? `$${costPerMl.toFixed(2)}/ml` : '$0.00/ml'}
+                                        </span>
+                                      </div>
+                                      <span className="text-[9px] text-slate-400 block mt-0.5">
+                                        Rinde ~{currentYield.toLocaleString('es-CL')} ml {isPowder ? `(al ${currentDil}%)` : ''}
+                                      </span>
+                                    </div>
+
+                                    {/* Input de Precio Tarro */}
+                                    <div className="relative w-32">
+                                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold font-mono text-xs">$</span>
                                       <input
                                         type="number"
                                         min="0"
-                                        value={price === 0 ? '' : price}
-                                        placeholder="Ej: 18000"
+                                        placeholder="0"
+                                        value={currentPrice === 0 ? '' : currentPrice}
                                         onChange={(e) => {
                                           const val = Math.max(0, Number(e.target.value) || 0);
-                                          setProductPrices(prev => ({ ...prev, [item.id]: val }));
+                                          handleUpdatePrice(item, val, currentFmt, currentDil);
                                         }}
-                                        className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-xl font-bold text-slate-700 font-mono text-right focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                                        className="w-full pl-6 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-black text-slate-800 font-mono text-right focus:outline-none focus:ring-2 focus:ring-purple-500/20 text-xs"
                                       />
                                     </div>
+
+                                    {/* Botón de Ajuste Fino (Engranaje / Opciones) */}
+                                    <button
+                                      type="button"
+                                      onClick={() => setExpandedPriceSettings(prev => ({ ...prev, [item.id]: !isSettingsOpen }))}
+                                      className={"p-2 rounded-xl border transition-all cursor-pointer " + (
+                                        isSettingsOpen
+                                          ? 'bg-purple-100 text-purple-700 border-purple-200 shadow-xs'
+                                          : 'bg-slate-50 hover:bg-slate-100 text-slate-500 border-slate-200'
+                                      )}
+                                      title="Ajustar formato o dilución personalizada"
+                                    >
+                                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                                    </button>
                                   </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        </div>
+                                </div>
+
+                                {/* Fila Desplegable de Ajuste Fino (Formato y Dilución) */}
+                                {isSettingsOpen && (
+                                  <div className="mt-1 pt-2.5 border-t border-purple-100/80 bg-purple-50/40 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs animate-fade-in">
+                                    <div className="flex flex-wrap items-center gap-4">
+                                      {/* Selector de Formato */}
+                                      <div className="flex items-center gap-2">
+                                        <label className="text-[10px] font-bold text-purple-800 uppercase">Formato:</label>
+                                        <select
+                                          value={currentFmt}
+                                          onChange={(e) => {
+                                            const newFmt = e.target.value as FormulaFormat;
+                                            const newDil = FORMULA_FORMAT_DATA[newFmt]?.defaultDil || 14;
+                                            handleUpdatePrice(item, currentPrice, newFmt, newDil);
+                                          }}
+                                          className="px-2.5 py-1 bg-white border border-purple-200 rounded-lg text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+                                        >
+                                          {Object.keys(FORMULA_FORMAT_DATA).map(fKey => (
+                                            <option key={fKey} value={fKey}>
+                                              {FORMULA_FORMAT_DATA[fKey as FormulaFormat].label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+
+                                      {/* Selector de Dilución para polvos */}
+                                      {isPowder && (
+                                        <div className="flex items-center gap-2">
+                                          <label className="text-[10px] font-bold text-purple-800 uppercase">Dilución:</label>
+                                          <div className="relative w-20">
+                                            <input
+                                              type="number"
+                                              min="5"
+                                              max="30"
+                                              step="0.5"
+                                              value={currentDil}
+                                              onChange={(e) => {
+                                                const val = Math.max(1, Number(e.target.value) || 14);
+                                                handleUpdatePrice(item, currentPrice, currentFmt, val);
+                                              }}
+                                              className="w-full pr-5 pl-2 py-1 bg-white border border-purple-200 rounded-lg font-black text-purple-900 font-mono text-right text-xs focus:outline-none"
+                                            />
+                                            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-purple-500 font-bold text-[10px]">%</span>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* Resumen dinámico del rendimiento */}
+                                    <div className="text-[11px] text-purple-800 font-medium">
+                                      1 tarro rinde ~{currentYield.toLocaleString('es-CL')} ml • Costo: ${costPerMl.toFixed(2)} / ml
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
                       </div>
-                    );
-                  })()}
-                </div>
+                    </div>
+                  );
+                })()
               )}
             </div>
 
             {/* Footer */}
-            <div className="bg-white border-t border-slate-200 p-4 text-center shrink-0">
+            <div className="bg-white border-t border-slate-200 px-6 py-3 flex items-center justify-between shrink-0">
+              <span className="text-xs text-slate-400 font-medium">
+                Hospital Regional de Antofagasta • SEDILE-CEFE • Gestión Financiera de Bodega
+              </span>
               <button
                 onClick={() => setShowMermasCostModal(false)}
-                className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold transition-all"
+                className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
               >
                 Cerrar Panel Financiero
               </button>
