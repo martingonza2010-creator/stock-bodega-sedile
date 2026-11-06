@@ -686,6 +686,7 @@ export default function App() {
 
   // --- Estados de Costos Financieros ---
   const [showMermasCostModal, setShowMermasCostModal] = useState(false);
+  const [showMermasMonthModal, setShowMermasMonthModal] = useState(false);
   const [mermasCostTab, setMermasCostTab] = useState<'mermas' | 'inventario'>('mermas');
   const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({});
   const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
@@ -1232,6 +1233,41 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('product_prices', JSON.stringify(productPrices));
   }, [productPrices]);
+
+  // --- Meses disponibles con estadísticas para reportes de mermas ---
+  const availableMermasMonths = useMemo(() => {
+    const groups: Record<string, {
+      monthKey: string;
+      firstDate: string;
+      recordCount: number;
+      mermasQty: number;
+      mermasCost: number;
+    }> = {};
+
+    mermasRecords.forEach(r => {
+      const mKey = getMonthYearKey(r.fecha);
+      if (!groups[mKey]) {
+        groups[mKey] = {
+          monthKey: mKey,
+          firstDate: r.fecha || '',
+          recordCount: 0,
+          mermasQty: 0,
+          mermasCost: 0,
+        };
+      }
+      if (r.fecha && r.fecha > groups[mKey].firstDate) {
+        groups[mKey].firstDate = r.fecha;
+      }
+      groups[mKey].recordCount += 1;
+      if (r.motivo !== 'Devolución para reutilizar') {
+        const parsed = parseMermaRecord(r);
+        groups[mKey].mermasQty += parsed.isLiquid ? 0 : (r.cantidad || 0);
+        groups[mKey].mermasCost += getMermaCost(r, formulaPricings);
+      }
+    });
+
+    return Object.values(groups).sort((a, b) => b.firstDate.localeCompare(a.firstDate));
+  }, [mermasRecords, formulaPricings]);
 
   // --- Estado Gráfico Estadísticas Admin ---
   const [statsChartType, setStatsChartType] = useState<'consumo' | 'autonomia' | 'stock'>('consumo');
@@ -4337,10 +4373,10 @@ export default function App() {
             </button>
 
             <button
-              onClick={copyMermasAsImage}
+              onClick={() => setShowMermasMonthModal(true)}
               disabled={mermasRecords.length === 0}
               className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-bold rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
-              title="Genera un informe gráfico en alta resolución y lo descarga como imagen"
+              title="Genera un informe gráfico en alta resolución por mes o histórico completo"
             >
               <ImageIcon className="w-3.5 h-3.5 text-blue-600" />
               <span>Generar Reporte de Mermas (Imagen)</span>
@@ -4366,13 +4402,19 @@ export default function App() {
       .catch(() => showToast("Error al copiar al portapapeles", "error"));
   };
 
-  const copyMermasAsImage = () => {
-    if (mermasRecords.length === 0) {
-      showToast("No hay registros de mermas para exportar como imagen.", "error");
+  const copyMermasAsImage = (targetMonthKey?: string | 'all' | null) => {
+    const isSpecificMonth = !!targetMonthKey && targetMonthKey !== 'all';
+    const recordsToUse = isSpecificMonth
+      ? mermasRecords.filter(r => getMonthYearKey(r.fecha) === targetMonthKey)
+      : mermasRecords;
+
+    if (recordsToUse.length === 0) {
+      showToast("No hay registros de mermas para exportar en este período.", "error");
       return;
     }
 
-    showToast("Generando reporte oficial de mermas...", "success");
+    const periodName = isSpecificMonth ? targetMonthKey : "Histórico Completo";
+    showToast("Generando reporte oficial de mermas (" + periodName + ")...", "success");
 
     const width = 2000;
     const totalHeight = 1080; // Altura ampliada para incluir el cuadro de estadísticas por servicio
@@ -4608,7 +4650,10 @@ export default function App() {
       ctx.fillStyle = '#e9d5ff';
       ctx.font = '500 16px system-ui, -apple-system, sans-serif';
       const currentDate = new Date().toLocaleString('es-CL');
-      ctx.fillText("Informe consolidado de mermas y análisis de costos • Generado el " + currentDate + " • SEDILE CEFE", 94, 74);
+      const periodSubtitle = isSpecificMonth
+        ? "Informe mensual de mermas • " + targetMonthKey
+        : "Informe consolidado de mermas y análisis de costos (Histórico completo)";
+      ctx.fillText(periodSubtitle + " • Generado el " + currentDate + " • SEDILE CEFE", 94, 74);
 
       // Logo
       try {
@@ -4632,8 +4677,8 @@ export default function App() {
       ctx.textAlign = 'center';
       ctx.fillText('REPORTE AUDITORÍA INTERNA', width - 24 - 120, 51);
 
-      // Procesar datos consolidados
-      const uniqueDates = [...new Set(mermasRecords.map(r => r.fecha))];
+      // Procesar datos consolidados del período seleccionado
+      const uniqueDates = [...new Set(recordsToUse.map(r => r.fecha))];
       const numDays = Math.max(1, uniqueDates.length);
       let totalMermasQty = 0;
       let totalMermasCost = 0;
@@ -4655,7 +4700,7 @@ export default function App() {
         categoryCosts[cat] = 0;
       });
 
-      mermasRecords.forEach(r => {
+      recordsToUse.forEach(r => {
         const isReused = r.motivo === 'Devolución para reutilizar';
         const qty = r.cantidad || 0;
         const parsed = parseMermaRecord(r);
@@ -4687,7 +4732,7 @@ export default function App() {
 
       // Calcular suplemento más mermado
       const supplementLosses: Record<string, number> = {};
-      mermasRecords.forEach(r => {
+      recordsToUse.forEach(r => {
         if (r.motivo !== 'Devolución para reutilizar') {
           const parsed = parseMermaRecord(r);
           if (parsed.isLiquid && parsed.supplementName) {
@@ -4735,7 +4780,10 @@ export default function App() {
         ctx.fillText(sub, x + 24, 210);
       };
 
-      drawKpiCard(50, '#fef2f2', '#fee2e2', 'PÉRDIDA TOTAL ESTIMADA (MERMA REAL)', "$ " + totalMermasCost.toLocaleString('es-CL'), "Proyección mensual: $ " + Math.round(monthlyLossProjected).toLocaleString('es-CL'));
+      const kpiPeriodSub = isSpecificMonth
+        ? "Período auditado: " + numDays + " día(s) con registros"
+        : "Proyección mensual: $ " + Math.round(monthlyLossProjected).toLocaleString('es-CL');
+      drawKpiCard(50, '#fef2f2', '#fee2e2', 'PÉRDIDA TOTAL ESTIMADA (MERMA REAL)', "$ " + totalMermasCost.toLocaleString('es-CL'), kpiPeriodSub);
       drawKpiCard(515, '#fffbeb', '#fef3c7', 'CANTIDAD TOTAL DESPERDICIADA', totalMermasQty + " unidades", "Promedio diario: " + avgMermasPerDay.toFixed(1) + " unidades/día");
       drawKpiCard(980, '#f0fdf4', '#dcfce7', 'CANTIDAD DE RETORNOS REUTILIZADOS', totalReusedQty + " unidades", "Tasa reutilización: " + Math.round((totalReusedQty / (totalMermasQty + totalReusedQty || 1)) * 100) + "%");
       drawKpiCard(1445, '#f5f3ff', '#ddd6fe', 'SUPLEMENTO MÁS MERMADO', mostMermadoName, mostMermadoVol > 0 ? ("Volumen total mermado: " + mostMermadoVol + " cc") : "Sin mermas registradas");
@@ -4970,7 +5018,7 @@ export default function App() {
         // Datos del servicio
         let sQty = 0;
         let sCost = 0;
-        mermasRecords.forEach(r => {
+        recordsToUse.forEach(r => {
           if (r.seccion === service && r.motivo !== 'Devolución para reutilizar') {
             sQty += (r.cantidad || 0);
             sCost += getMermaCost(r, formulaPricings);
@@ -5043,7 +5091,8 @@ export default function App() {
       ctx.font = 'italic 15px system-ui';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText('REPORTE AUDITORÍA MERMAS 2026 • Información de control e indicadores financieros de bodega central.', 24, footerY + 26);
+      const footerPeriod = isSpecificMonth ? "MES DE " + targetMonthKey.toUpperCase() : "HISTÓRICO COMPLETO";
+      ctx.fillText('REPORTE AUDITORÍA MERMAS 2026 • ' + footerPeriod + ' • Información de control e indicadores financieros.', 24, footerY + 26);
 
       ctx.textAlign = 'right';
       ctx.fillText('Unidad de Nutrición • Hospital Regional de Antofagasta • SEDILE CEFE', width - 24, footerY + 26);
@@ -5054,11 +5103,12 @@ export default function App() {
         const link = document.createElement('a');
         link.href = dataUrl;
         const dateStr = new Date().toLocaleDateString('es-CL').replace(/\//g, '-');
-        link.download = "Auditoria_Mermas_SEDILE_" + dateStr + ".png";
+        const safeMonthStr = isSpecificMonth ? targetMonthKey.replace(/\s+/g, '_') : 'Historico_' + dateStr;
+        link.download = "Auditoria_Mermas_" + safeMonthStr + ".png";
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        showToast("¡Reporte oficial de mermas descargado en imagen PNG con éxito!", "success");
+        showToast("¡Reporte oficial de mermas (" + (isSpecificMonth ? targetMonthKey : "Histórico") + ") descargado con éxito!", "success");
       } catch (err) {
         showToast("Error al exportar reporte de mermas", "error");
       }
@@ -8117,6 +8167,144 @@ export default function App() {
                 className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold transition-all"
               >
                 Cerrar Panel Financiero
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- MODAL SELECTOR DE MES PARA REPORTE DE MERMAS (IMAGEN) --- */}
+      {showMermasMonthModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-xl max-h-[85vh] overflow-hidden shadow-2xl border border-slate-200 flex flex-col animate-scale-in">
+            {/* Cabecera */}
+            <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-purple-800 text-white px-6 py-4 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-white/10 rounded-xl">
+                  <ImageIcon className="w-5 h-5 text-blue-200" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base md:text-lg">Generar Reporte de Mermas (Imagen)</h3>
+                  <p className="text-xs text-blue-100 font-medium">Selecciona el período o mes que deseas exportar</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowMermasMonthModal(false)}
+                className="p-1.5 hover:bg-white/10 rounded-full text-white/80 hover:text-white transition-colors cursor-pointer"
+                title="Cerrar ventana"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Contenido */}
+            <div className="p-6 overflow-y-auto space-y-5">
+              {/* Opción 1: Reporte Histórico Completo */}
+              <div className="flex flex-col gap-2">
+                <span className="text-[11px] font-black tracking-wider text-slate-400 uppercase">
+                  Auditoría Consolidada
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMermasMonthModal(false);
+                    copyMermasAsImage('all');
+                  }}
+                  className="w-full text-left p-4 rounded-2xl bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 border-2 border-indigo-200 hover:border-indigo-400 hover:shadow-md transition-all group flex items-center justify-between cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center font-black text-xl shadow-md group-hover:scale-105 transition-transform">
+                      📊
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-black text-slate-800 text-sm md:text-base group-hover:text-indigo-700 transition-colors">
+                          Histórico Completo (Todos los meses)
+                        </h4>
+                        <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-black uppercase tracking-wide">
+                          Todo
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 font-medium mt-0.5">
+                        Consolida todos los períodos ({mermasRecords.length} eventos registrados)
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors shrink-0">
+                    <ImageIcon className="w-3.5 h-3.5" />
+                    <span>Generar</span>
+                  </div>
+                </button>
+              </div>
+
+              {/* Opción 2: Desglose por Mes */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-black tracking-wider text-slate-400 uppercase">
+                    Reporte por Mes Registrado ({availableMermasMonths.length})
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-bold">
+                    Haz clic en el mes que deseas descargar
+                  </span>
+                </div>
+
+                {availableMermasMonths.length === 0 ? (
+                  <div className="p-8 text-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs font-semibold">
+                    No se encontraron registros de mermas por mes.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {availableMermasMonths.map(month => (
+                      <button
+                        key={month.monthKey}
+                        type="button"
+                        onClick={() => {
+                          setShowMermasMonthModal(false);
+                          copyMermasAsImage(month.monthKey);
+                        }}
+                        className="text-left p-3.5 rounded-2xl bg-white border border-slate-200 hover:border-purple-300 hover:bg-purple-50/40 hover:shadow-md transition-all group flex flex-col justify-between cursor-pointer"
+                      >
+                        <div className="flex items-center justify-between w-full mb-2">
+                          <div className="flex items-center gap-2">
+                            <Calendar className="w-4 h-4 text-purple-600 group-hover:scale-110 transition-transform" />
+                            <span className="font-black text-slate-800 text-sm group-hover:text-purple-700 transition-colors">
+                              {month.monthKey}
+                            </span>
+                          </div>
+                          <span className="px-2 py-0.5 rounded-md bg-purple-100 text-purple-700 text-[10px] font-bold">
+                            {month.recordCount} reg.
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[11px]">
+                          <span className="text-slate-500 font-medium">
+                            {month.mermasQty} uds. mermadas
+                          </span>
+                          <span className="text-rose-600 font-mono font-black">
+                            $ {month.mermasCost.toLocaleString('es-CL')}
+                          </span>
+                        </div>
+
+                        <div className="mt-2.5 w-full py-1.5 bg-slate-50 group-hover:bg-purple-600 group-hover:text-white text-slate-600 rounded-xl text-center text-xs font-bold transition-colors flex items-center justify-center gap-1.5">
+                          <ImageIcon className="w-3 h-3" />
+                          <span>Descargar Imagen</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="bg-slate-50 px-6 py-3 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500 font-medium shrink-0">
+              <span>Resolución de imagen: 2000 × 1080 px (Ultra HD)</span>
+              <button
+                type="button"
+                onClick={() => setShowMermasMonthModal(false)}
+                className="px-4 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                Cerrar
               </button>
             </div>
           </div>
