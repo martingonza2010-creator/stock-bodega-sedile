@@ -339,21 +339,39 @@ const getPatientFinishedDate = (item: any) => {
 };
 
 const parseMermaRecord = (r: any) => {
-  const sec = r.seccion || '';
+  let rawSec = r.seccion || '';
+  let rawMotivo = r.motivo || '';
+  let rawProdUnidad = r.producto_unidad || '';
+  
+  // Detectar metadatos codificados en producto_unidad para compatibilidad con bases de datos antiguas
+  const tagMatch = String(rawProdUnidad).match(/^\[SEC:(.*?)\|MOT:(.*?)\]\s*(.*)$/);
+  if (tagMatch) {
+    rawSec = tagMatch[1];
+    rawMotivo = tagMatch[2];
+    rawProdUnidad = tagMatch[3];
+  } else {
+    const legacyTagMatch = String(rawProdUnidad).match(/^\[(.*?)\]\s*(.*)$/);
+    if (legacyTagMatch) {
+      rawSec = legacyTagMatch[1];
+      rawProdUnidad = legacyTagMatch[2];
+    }
+  }
+  
+  const sec = rawSec;
   let baseSection = 'Neonatología';
   let subServicio = sec;
   
   const enteralFloors = ['2°piso', '3°piso UCO', '4°piso', '5°piso', '6°piso', '7°piso', '8°piso', '2° piso UCI Y TIM', '3°er piso CORO', '4to piso', '5to piso', '6to piso', '7mo piso', '8vo piso'];
   const pediatricServices = ['Lactantes', 'II infancia', 'Cirugia', 'Timped', 'Uciped', 'Oncoped'];
   
-  if (enteralFloors.includes(sec)) {
+  if (enteralFloors.includes(sec) || sec === 'Enterales') {
     baseSection = 'Enterales';
-  } else if (pediatricServices.includes(sec)) {
+  } else if (pediatricServices.includes(sec) || sec === 'Pediatría') {
     baseSection = 'Pediatría';
   }
   
-  const containerType = r.producto_unidad ? r.producto_unidad.split(' - ')[0] : '';
-  const supplementName = (r.producto_unidad && r.producto_unidad.includes(' - ')) ? r.producto_unidad.split(' - ')[1] : '';
+  const containerType = rawProdUnidad ? rawProdUnidad.split(' - ')[0] : '';
+  const supplementName = (rawProdUnidad && rawProdUnidad.includes(' - ')) ? rawProdUnidad.split(' - ')[1] : '';
   
   const isLiquid = ['Mamaderas', 'Vasos con suplemento', 'Vasos con productos especiales', 'Jeringa BIC', 'Jeringa Gavage', 'Botellines', 'Jugos en caja'].includes(containerType) || containerType.includes('Jeringa');
   
@@ -376,6 +394,9 @@ const parseMermaRecord = (r: any) => {
   return {
     baseSection,
     subServicio,
+    cleanSeccion: rawSec,
+    cleanMotivo: rawMotivo,
+    cleanProductoUnidad: rawProdUnidad,
     containerType,
     supplementName,
     isLiquid,
@@ -1176,9 +1197,36 @@ export default function App() {
     return {};
   });
 
-  // Guardar en localStorage al cambiar
+  // Sincronizar precios de fórmulas con la nube (config_sedile) para que coincidan en todos los dispositivos
+  const fetchFormulaPricingsCloud = async () => {
+    if (!isConfigured) return;
+    try {
+      const { data, error } = await supabase
+        .from('config_sedile')
+        .select('value')
+        .eq('key', 'formula_pricings_v2')
+        .maybeSingle();
+
+      if (!error && data?.value && Object.keys(data.value).length > 0) {
+        setFormulaPricings(data.value);
+        localStorage.setItem('formula_pricings_v2', JSON.stringify(data.value));
+      }
+    } catch (err) {
+      // Fallback silencioso si la tabla aún no existe
+    }
+  };
+
+  // Guardar en localStorage y en Supabase al cambiar
   useEffect(() => {
     localStorage.setItem('formula_pricings_v2', JSON.stringify(formulaPricings));
+    if (isConfigured) {
+      supabase
+        .from('config_sedile')
+        .upsert({ key: 'formula_pricings_v2', value: formulaPricings, updated_at: new Date().toISOString() })
+        .then(({ error }) => {
+          if (error) console.warn("Aviso al sincronizar config_sedile en Supabase:", error.message);
+        });
+    }
   }, [formulaPricings]);
 
   useEffect(() => {
@@ -1294,6 +1342,7 @@ export default function App() {
     fetchWorkloadRecords();
     fetchMermasRecords();
     fetchPegDeliveries();
+    fetchFormulaPricingsCloud();
     checkAdminSession();
     
     // Configurar suscripción Supabase Realtime si está configurado
@@ -1331,6 +1380,14 @@ export default function App() {
           (payload) => {
             console.log('Cambio detectado en tiempo real (PEG Pediatría):', payload);
             fetchPegDeliveries(false); // refresh silencioso
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'config_sedile' },
+          (payload) => {
+            console.log('Cambio detectado en tiempo real (configuración):', payload);
+            fetchFormulaPricingsCloud();
           }
         )
         .subscribe();
@@ -2073,6 +2130,50 @@ export default function App() {
     setLoadingWorkload(false);
   };
 
+  // Auto-sincronizar mermas locales pendientes hacia Supabase para rescate automático
+  const syncLocalMermasToCloud = async (localRecords: any[]) => {
+    if (!isConfigured || localRecords.length === 0) return;
+    let anySynced = false;
+    const remainingLocal: any[] = [];
+
+    for (const rec of localRecords) {
+      try {
+        const { id, created_at, ...cleanRec } = rec;
+        // 1. Intentar inserción directa
+        const { data, error } = await supabase.from('mermas_sedile').insert([cleanRec]).select();
+        if (!error && data && data.length > 0) {
+          anySynced = true;
+          continue;
+        }
+
+        // 2. Fallback de compatibilidad total
+        const parsed = parseMermaRecord(cleanRec);
+        const compatibleRecord = {
+          fecha: cleanRec.fecha,
+          seccion: parsed.baseSection as any,
+          motivo: 'Acumulación',
+          producto_unidad: `[SEC:${cleanRec.seccion}|MOT:${cleanRec.motivo}] ${cleanRec.producto_unidad}`,
+          cantidad: cleanRec.cantidad
+        };
+        const { data: retryData, error: retryError } = await supabase.from('mermas_sedile').insert([compatibleRecord]).select();
+        if (!retryError && retryData && retryData.length > 0) {
+          anySynced = true;
+          continue;
+        }
+
+        remainingLocal.push(rec);
+      } catch (e) {
+        remainingLocal.push(rec);
+      }
+    }
+
+    if (anySynced) {
+      localStorage.setItem('mermas_cache', JSON.stringify(remainingLocal));
+      await fetchMermasRecords(false);
+      showToast("Mermas locales sincronizadas con la nube con éxito", "success");
+    }
+  };
+
   // --- Registro de Mermas SEDILE-CEFE ---
   const fetchMermasRecords = async (showLoading = true) => {
     if (showLoading) setLoadingMermas(true);
@@ -2089,10 +2190,26 @@ export default function App() {
         if (!error && data) {
           const cacheStr = localStorage.getItem('mermas_cache');
           const localOnly = cacheStr ? JSON.parse(cacheStr).filter((r: any) => String(r.id).startsWith('local-')) : [];
-          const merged = [...localOnly, ...data];
+          
+          const normalized = data.map((r: any) => {
+            const p = parseMermaRecord(r);
+            return {
+              ...r,
+              seccion: p.cleanSeccion,
+              motivo: p.cleanMotivo,
+              producto_unidad: p.cleanProductoUnidad
+            };
+          });
+
+          const merged = [...localOnly, ...normalized];
           setMermasRecords(merged);
           localStorage.setItem('mermas_cache', JSON.stringify(merged));
           success = true;
+
+          // Si hay registros locales pendientes de sincronizar, enviarlos a Supabase
+          if (localOnly.length > 0) {
+            syncLocalMermasToCloud(localOnly);
+          }
         } else {
           console.error("Error al obtener mermas de Supabase:", error);
         }
@@ -2104,7 +2221,16 @@ export default function App() {
     if (!success) {
       const cache = localStorage.getItem('mermas_cache');
       if (cache) {
-        setMermasRecords(JSON.parse(cache));
+        const parsed = JSON.parse(cache).map((r: any) => {
+          const p = parseMermaRecord(r);
+          return {
+            ...r,
+            seccion: p.cleanSeccion,
+            motivo: p.cleanMotivo,
+            producto_unidad: p.cleanProductoUnidad
+          };
+        });
+        setMermasRecords(parsed);
       } else {
         setMermasRecords([]);
       }
@@ -2144,12 +2270,13 @@ export default function App() {
     };
 
     // Buscar si ya existe un registro con la misma fecha, sección, motivo y fórmula/producto para acumular
-    const existing = mermasRecords.find(r => 
-      r.fecha === recordToAdd.fecha &&
-      r.seccion === recordToAdd.seccion &&
-      r.motivo === recordToAdd.motivo &&
-      r.producto_unidad === recordToAdd.producto_unidad
-    );
+    const existing = mermasRecords.find(r => {
+      const p = parseMermaRecord(r);
+      return r.fecha === recordToAdd.fecha &&
+        (p.cleanSeccion === recordToAdd.seccion || r.seccion === recordToAdd.seccion) &&
+        (p.cleanMotivo === recordToAdd.motivo || r.motivo === recordToAdd.motivo) &&
+        (p.cleanProductoUnidad === recordToAdd.producto_unidad || r.producto_unidad === recordToAdd.producto_unidad);
+    });
 
     let success = false;
 
@@ -2200,15 +2327,15 @@ export default function App() {
             showToast("Registro de merma guardado en Supabase", "success");
             success = true;
           } else {
-            console.warn("Fallo insert directo en Supabase, intentando reintento compatible:", error);
-            // Reintento compatible: mapear seccion a baseSection si la DB antigua tiene check constraint
+            console.warn("Fallo insert directo en Supabase, aplicando guardado compatible:", error);
+            // Reintento compatible: encapsular sección y motivo en producto_unidad para compatibilidad con DB antigua
             const parsed = parseMermaRecord(recordToAdd);
             const compatibleRecord = {
-              ...recordToAdd,
+              fecha: recordToAdd.fecha,
               seccion: parsed.baseSection as any,
-              producto_unidad: recordToAdd.seccion !== parsed.baseSection 
-                ? `[${recordToAdd.seccion}] ${recordToAdd.producto_unidad}` 
-                : recordToAdd.producto_unidad
+              motivo: 'Acumulación',
+              producto_unidad: `[SEC:${recordToAdd.seccion}|MOT:${recordToAdd.motivo}] ${recordToAdd.producto_unidad}`,
+              cantidad: recordToAdd.cantidad
             };
             const { data: retryData, error: retryError } = await supabase
               .from('mermas_sedile')
@@ -2216,7 +2343,7 @@ export default function App() {
               .select();
 
             if (!retryError && retryData && retryData.length > 0) {
-              showToast("Guardado en Supabase (¡Ejecuta la migración SQL de mermas para desbloquear secciones!)", "warning");
+              showToast("Guardado en la nube con éxito", "success");
               success = true;
             } else {
               console.error("Error definitivo al guardar en Supabase:", retryError || error);
