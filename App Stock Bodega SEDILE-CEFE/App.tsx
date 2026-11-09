@@ -415,6 +415,64 @@ export const FORMULA_FORMAT_DATA: Record<FormulaFormat, { label: string; ml: num
   'rth_500ml': { label: 'Bolsa RTH 500 ml', ml: 500, isPowder: false, defaultDil: 100 }
 };
 
+export interface ProductPackagingSpec {
+  isLiquid: boolean;
+  grams: number;
+  ml: number;
+  detectedLabel: string;
+}
+
+export const parseProductPackaging = (unidad?: string, nombre?: string): ProductPackagingSpec => {
+  const text = `${unidad || ''} ${nombre || ''}`.toLowerCase();
+  
+  // 1. Líquidos en volumen (ml o cc)
+  if (text.includes('rth 1000') || text.includes('1 lt') || text.includes('1lt') || text.includes('1000 ml') || text.includes('1000ml')) {
+    return { isLiquid: true, grams: 0, ml: 1000, detectedLabel: '1.000 ml' };
+  }
+  
+  const mlMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(?:ml|cc)\b/);
+  if (mlMatch) {
+    const vol = Math.round(Number(mlMatch[1].replace(',', '.')) || 0);
+    if (vol > 0) {
+      return { isLiquid: true, grams: 0, ml: vol, detectedLabel: `${vol} ml` };
+    }
+  }
+
+  // 2. Peso en kg o gramos (ej: 300g, 400g, 850g, 900g, 1350g, 1kg)
+  const kgMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(?:kg|kilo)\b/);
+  if (kgMatch) {
+    const kg = Number(kgMatch[1].replace(',', '.')) || 1;
+    const g = Math.round(kg * 1000);
+    return { isLiquid: false, grams: g, ml: 0, detectedLabel: `${g} g` };
+  }
+
+  const gMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(?:g|gr|grs|gramos)\b/);
+  if (gMatch) {
+    const g = Math.round(Number(gMatch[1].replace(',', '.')) || 0);
+    if (g > 0) {
+      return { isLiquid: false, grams: g, ml: 0, detectedLabel: `${g} g` };
+    }
+  }
+
+  // Líquidos genéricos
+  if (text.includes('botell') || text.includes('frasco') || text.includes('rth') || text.includes('tetra') || text.includes('caja')) {
+    return { isLiquid: true, grams: 0, ml: 200, detectedLabel: '200 ml' };
+  }
+
+  // Polvo estándar por defecto (400g)
+  return { isLiquid: false, grams: 400, ml: 0, detectedLabel: '400 g' };
+};
+
+export const calculateProductYieldMl = (unidad?: string, nombre?: string, dilutionPct = 14) => {
+  const spec = parseProductPackaging(unidad, nombre);
+  if (spec.isLiquid) {
+    return { yieldMl: Math.max(1, spec.ml), isLiquid: true, grams: 0, ml: spec.ml };
+  }
+  const dil = Number(dilutionPct) > 0 ? Number(dilutionPct) : 14;
+  const yieldMl = Math.round(spec.grams / (dil / 100));
+  return { yieldMl: Math.max(1, yieldMl), isLiquid: false, grams: spec.grams, ml: 0 };
+};
+
 export const detectFormulaFormat = (name: string, unidad?: string): FormulaFormat => {
   const lower = (name || '').toLowerCase();
   const uLower = (unidad || '').toLowerCase();
@@ -8058,7 +8116,7 @@ export default function App() {
                   );
                 })()
               ) : (
-                /* --- PESTAÑA 2: CATÁLOGO UNIFICADO DE PRECIOS DE PRODUCTOS --- */
+                /* --- PESTAÑA 2: CATÁLOGO UNIFICADO DE PRECIOS DE PRODUCTOS (SIN FORMATO REPETITIVO) --- */
                 (() => {
                   const activeProducts = items.filter(item => !item.oculto);
 
@@ -8076,8 +8134,8 @@ export default function App() {
                     return price > 0;
                   }).length;
 
-                  // Función auxiliar para actualizar precio de forma unificada
-                  const handleUpdatePrice = (item: StockItem, price: number, format?: FormulaFormat, dil?: number) => {
+                  // Función auxiliar para actualizar precio de forma unificada leyendo los gramos/ml de la unidad
+                  const handleUpdatePrice = (item: StockItem, price: number, dil?: number) => {
                     setProductPrices(prev => {
                       const updated = { ...prev, [item.id]: price };
                       try { localStorage.setItem('product_prices', JSON.stringify(updated)); } catch (e) {}
@@ -8086,15 +8144,13 @@ export default function App() {
 
                     setFormulaPricings(prev => {
                       const existing = prev[item.nombre] || prev[item.id] || {};
-                      const fmt = format || existing.formato || detectFormulaFormat(item.nombre, item.unidad);
-                      const defaultDil = FORMULA_FORMAT_DATA[fmt]?.defaultDil || 14;
+                      const defaultDil = 14;
                       const dilution = dil !== undefined ? dil : (existing.dilucion_pct !== undefined ? existing.dilucion_pct : defaultDil);
-                      const yieldMl = calculateFormulaYieldMl({ formato: fmt, dilucion_pct: dilution });
+                      const { yieldMl, isLiquid } = calculateProductYieldMl(item.unidad, item.nombre, dilution);
 
                       const updatedPricing: FormulaPricing = {
                         precio_tarro: price,
-                        formato: fmt,
-                        dilucion_pct: dilution,
+                        dilucion_pct: isLiquid ? 100 : dilution,
                         ml_por_tarro: yieldMl
                       };
 
@@ -8107,8 +8163,6 @@ export default function App() {
                       try {
                         localStorage.setItem('formula_pricings_v2', JSON.stringify(next));
                       } catch (e) {}
-
-// El guardado en la nube se ejecuta con debounce automático en el useEffect
 
                       return next;
                     });
@@ -8127,7 +8181,7 @@ export default function App() {
                               Catálogo Unificado de Precios de Bodega
                             </h4>
                             <p className="text-xs text-slate-500 font-medium">
-                              Ingresa el valor de compra del tarro/envase. El sistema calcula automáticamente el gasto diario de bodega y el costo por ml para las mermas.
+                              Ingresa el valor de compra del tarro o envase. Los gramos y volumen se detectan automáticamente de cada producto para calcular el costo por ml de las mermas.
                             </p>
                           </div>
                         </div>
@@ -8179,13 +8233,11 @@ export default function App() {
                           filteredProducts.map(item => {
                             const pricing = formulaPricings[item.nombre] || formulaPricings[item.id] || {};
                             const currentPrice = pricing.precio_tarro || productPrices[item.id] || 0;
-                            const currentFmt = (pricing.formato || detectFormulaFormat(item.nombre, item.unidad)) as FormulaFormat;
-                            const currentFmtData = FORMULA_FORMAT_DATA[currentFmt] || FORMULA_FORMAT_DATA['polvo_400g'];
-                            const isPowder = currentFmtData.isPowder;
-                            const currentDil = pricing.dilucion_pct !== undefined ? pricing.dilucion_pct : currentFmtData.defaultDil;
-                            const currentYield = calculateFormulaYieldMl({ formato: currentFmt, dilucion_pct: currentDil });
+                            const packaging = parseProductPackaging(item.unidad, item.nombre);
+                            const currentDil = pricing.dilucion_pct !== undefined ? pricing.dilucion_pct : 14;
+                            const currentYield = packaging.isLiquid ? packaging.ml : Math.round(packaging.grams / (currentDil / 100));
                             const costPerMl = currentPrice > 0 ? (currentPrice / Math.max(1, currentYield)) : 0;
-                            const isSettingsOpen = !!expandedPriceSettings[item.id];
+                            const isSettingsOpen = !packaging.isLiquid && !!expandedPriceSettings[item.id];
                             const dailySpend = (item.uso_diario || 0) * currentPrice;
 
                             return (
@@ -8211,25 +8263,22 @@ export default function App() {
                                       <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400 font-medium">
                                         <span>Uso: <strong className="text-slate-600">{item.uso_diario} {item.unidad}/día</strong></span>
                                         <span>•</span>
-                                        <span>Gasto diario: <strong className="text-indigo-600 font-mono">${Math.round(dailySpend).toLocaleString('es-CL')}/día</strong></span>
+                                        <span>Gasto diario: <strong className="text-indigo-600 font-mono">$${Math.round(dailySpend).toLocaleString('es-CL')}/día</strong></span>
                                       </div>
                                     </div>
                                   </div>
 
-                                  {/* Columna Derecha: Rendimiento + Input de Precio + Botón de Opciones */}
+                                  {/* Columna Derecha: Rendimiento + Input de Precio + Botón de Dilución */}
                                   <div className="flex items-center justify-end gap-3 shrink-0">
                                     {/* Indicadores de Rendimiento */}
                                     <div className="text-right">
                                       <div className="flex items-center justify-end gap-1.5">
-                                        <span className="text-[9px] text-slate-400 font-semibold">
-                                          {currentFmtData.label}
-                                        </span>
                                         <span className="text-[10px] font-black text-purple-700 font-mono bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100">
                                           {costPerMl > 0 ? `$${costPerMl.toFixed(2)}/ml` : '$0.00/ml'}
                                         </span>
                                       </div>
                                       <span className="text-[9px] text-slate-400 block mt-0.5">
-                                        Rinde ~{currentYield.toLocaleString('es-CL')} ml {isPowder ? `(al ${currentDil}%)` : ''}
+                                        Rinde ~{currentYield.toLocaleString('es-CL')} ml {!packaging.isLiquid ? `(al ${currentDil}%)` : ''}
                                       </span>
                                     </div>
 
@@ -8243,78 +8292,58 @@ export default function App() {
                                         value={currentPrice === 0 ? '' : currentPrice}
                                         onChange={(e) => {
                                           const val = Math.max(0, Number(e.target.value) || 0);
-                                          handleUpdatePrice(item, val, currentFmt, currentDil);
+                                          handleUpdatePrice(item, val, currentDil);
                                         }}
                                         className="w-full pl-6 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-black text-slate-800 font-mono text-right focus:outline-none focus:ring-2 focus:ring-purple-500/20 text-xs"
                                       />
                                     </div>
 
-                                    {/* Botón de Ajuste Fino (Engranaje / Opciones) */}
-                                    <button
-                                      type="button"
-                                      onClick={() => setExpandedPriceSettings(prev => ({ ...prev, [item.id]: !isSettingsOpen }))}
-                                      className={"p-2 rounded-xl border transition-all cursor-pointer " + (
-                                        isSettingsOpen
-                                          ? 'bg-purple-100 text-purple-700 border-purple-200 shadow-xs'
-                                          : 'bg-slate-50 hover:bg-slate-100 text-slate-500 border-slate-200'
-                                      )}
-                                      title="Ajustar formato o dilución personalizada"
-                                    >
-                                      <SlidersHorizontal className="w-3.5 h-3.5" />
-                                    </button>
+                                    {/* Botón de Ajuste de Dilución (Solo para polvos, oculto en líquidos) */}
+                                    {!packaging.isLiquid ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => setExpandedPriceSettings(prev => ({ ...prev, [item.id]: !isSettingsOpen }))}
+                                        className={"p-2 rounded-xl border transition-all cursor-pointer " + (
+                                          isSettingsOpen
+                                            ? 'bg-purple-100 text-purple-700 border-purple-200 shadow-xs'
+                                            : 'bg-slate-50 hover:bg-slate-100 text-slate-500 border-slate-200'
+                                        )}
+                                        title="Ajustar porcentaje de dilución personalizada"
+                                      >
+                                        <SlidersHorizontal className="w-3.5 h-3.5" />
+                                      </button>
+                                    ) : (
+                                      <div className="w-[34px]" /> // espaciador visual para alinear columnas
+                                    )}
                                   </div>
                                 </div>
 
-                                {/* Fila Desplegable de Ajuste Fino (Formato y Dilución) */}
-                                {isSettingsOpen && (
+                                {/* Franja Desplegable Sutil de Ajuste de Dilución (Solo para polvos) */}
+                                {isSettingsOpen && !packaging.isLiquid && (
                                   <div className="mt-1 pt-2.5 border-t border-purple-100/80 bg-purple-50/40 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs animate-fade-in">
-                                    <div className="flex flex-wrap items-center gap-4">
-                                      {/* Selector de Formato */}
-                                      <div className="flex items-center gap-2">
-                                        <label className="text-[10px] font-bold text-purple-800 uppercase">Formato:</label>
-                                        <select
-                                          value={currentFmt}
+                                    <div className="flex items-center gap-3">
+                                      <span className="text-[10px] font-bold text-purple-800 uppercase tracking-wider">
+                                        Ajuste de Dilución:
+                                      </span>
+                                      <div className="relative w-24">
+                                        <input
+                                          type="number"
+                                          min="5"
+                                          max="30"
+                                          step="0.5"
+                                          value={currentDil}
                                           onChange={(e) => {
-                                            const newFmt = e.target.value as FormulaFormat;
-                                            const newDil = FORMULA_FORMAT_DATA[newFmt]?.defaultDil || 14;
-                                            handleUpdatePrice(item, currentPrice, newFmt, newDil);
+                                            const val = Math.max(1, Number(e.target.value) || 14);
+                                            handleUpdatePrice(item, currentPrice, val);
                                           }}
-                                          className="px-2.5 py-1 bg-white border border-purple-200 rounded-lg text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
-                                        >
-                                          {Object.keys(FORMULA_FORMAT_DATA).map(fKey => (
-                                            <option key={fKey} value={fKey}>
-                                              {FORMULA_FORMAT_DATA[fKey as FormulaFormat].label}
-                                            </option>
-                                          ))}
-                                        </select>
+                                          className="w-full pr-6 pl-2.5 py-1 bg-white border border-purple-200 rounded-lg font-black text-purple-900 font-mono text-right text-xs focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                                        />
+                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-purple-600 font-bold text-[10px]">%</span>
                                       </div>
-
-                                      {/* Selector de Dilución para polvos */}
-                                      {isPowder && (
-                                        <div className="flex items-center gap-2">
-                                          <label className="text-[10px] font-bold text-purple-800 uppercase">Dilución:</label>
-                                          <div className="relative w-20">
-                                            <input
-                                              type="number"
-                                              min="5"
-                                              max="30"
-                                              step="0.5"
-                                              value={currentDil}
-                                              onChange={(e) => {
-                                                const val = Math.max(1, Number(e.target.value) || 14);
-                                                handleUpdatePrice(item, currentPrice, currentFmt, val);
-                                              }}
-                                              className="w-full pr-5 pl-2 py-1 bg-white border border-purple-200 rounded-lg font-black text-purple-900 font-mono text-right text-xs focus:outline-none"
-                                            />
-                                            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-purple-500 font-bold text-[10px]">%</span>
-                                          </div>
-                                        </div>
-                                      )}
                                     </div>
 
-                                    {/* Resumen dinámico del rendimiento */}
                                     <div className="text-[11px] text-purple-800 font-medium">
-                                      1 tarro rinde ~{currentYield.toLocaleString('es-CL')} ml • Costo: ${costPerMl.toFixed(2)} / ml
+                                      1 tarro de <strong>{packaging.grams} g</strong> al <strong>{currentDil}%</strong> rinde <strong className="font-mono text-purple-950">~{currentYield.toLocaleString('es-CL')} ml</strong> • Costo: <strong className="font-mono text-purple-950">${costPerMl.toFixed(2)} / ml</strong>
                                     </div>
                                   </div>
                                 )}
