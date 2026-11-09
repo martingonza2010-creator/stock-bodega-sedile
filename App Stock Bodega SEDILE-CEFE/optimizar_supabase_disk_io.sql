@@ -1,5 +1,5 @@
 -- ==============================================================================
--- SCRIPT DE OPTIMIZACIÓN DE DISK I/O Y CREACIÓN DE ÍNDICES - SEDILE HRA (V2)
+-- SCRIPT DE OPTIMIZACIÓN DE DISK I/O Y CREACIÓN DE ÍNDICES - SEDILE HRA
 -- ==============================================================================
 -- Copie y pegue este script en el editor SQL de Supabase (SQL Editor) y presione 'Run'.
 -- ==============================================================================
@@ -47,11 +47,11 @@ DELETE FROM public.stock_history
 WHERE changed_at < NOW() - INTERVAL '60 days';
 
 -- ------------------------------------------------------------------------------
--- PASO 3: DESFRAGMENTAR Y LIBERAR ESPACIO EN DISCO
+-- PASO 3: ACTUALIZAR ESTADÍSTICAS DEL OPTIMIZADOR DE POSTGRESQL
 -- ------------------------------------------------------------------------------
--- Reclama espacio en disco de filas borradas/actualizadas y actualiza
--- las estadísticas de PostgreSQL para que use los nuevos índices.
-VACUUM (ANALYZE, VERBOSE);
+-- Fuerza a PostgreSQL a usar inmediatamente los nuevos índices en memoria RAM
+-- en lugar de hacer lecturas completas del disco físico.
+ANALYZE;
 
 -- ------------------------------------------------------------------------------
 -- PASO 4: DIAGNÓSTICO DEL TAMAÑO DE TABLAS (Muestra el peso real de cada tabla)

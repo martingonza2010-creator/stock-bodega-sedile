@@ -358,6 +358,10 @@
                         style="background:var(--primary); color:white; border-color:white;">
                         <span>🏥 Vista de Sala</span>
                     </button>
+                    <button class="btn-premium-toggle" id="btnOpenHistory" title="Historial Clínico de Casos"
+                        style="background:#4f46e5; color:white; border-color:white;">
+                        <span>📁 Historial</span>
+                    </button>
                     <button class="btn-premium-toggle" id="btnAdminPanel" title="Administración de Usuarios" style="background: rgba(52, 152, 219, 0.08); color: #2980b9; border-color: rgba(52, 152, 219, 0.15); display: none;"><span>⚙️ Administrador</span></button>
                     <button class="btn-premium-toggle" id="btnLogoutHeader" title="Cerrar Sesión" onclick="window.logout()" style="background: rgba(231, 76, 60, 0.08); color: #eb5959; border-color: rgba(231, 76, 60, 0.15);"><span>Cerrar Sesión</span></button>
                 </div>
@@ -1371,19 +1375,39 @@
                                     <div class="mini-input">
                                         <label style="font-weight:700; color:var(--primary); font-size:0.75rem;">Seleccionar Régimen Clínico</label>
                                         <select id="oralDietType" style="padding:8px; border-radius:8px; border:1px solid rgba(0,0,0,0.1); width:100%; font-size:0.85rem;">
-                                            <option value="custom">-- Personalizado --</option>
-                                            <option value="blando_sin_residuos">Blando sin Residuos (1874 kcal)</option>
+                                            <option value="custom">-- Personalizado / Según Ficha --</option>
+                                            <option value="comun">Común / Normal (2000 kcal)</option>
                                             <option value="liviano">Liviano (2055 kcal)</option>
+                                            <option value="blando">Blando común (1900 kcal)</option>
+                                            <option value="blando_sin_residuos">Blando sin Residuos (1874 kcal)</option>
+                                            <option value="papilla">Papilla común (1600 kcal)</option>
+                                            <option value="papilla_liviana">Papilla Liviana (1587 kcal)</option>
+                                            <option value="papilla_diabetico">Papilla Diabético (1537 kcal)</option>
                                             <option value="hiposodico">Hiposódico (2063 kcal)</option>
                                             <option value="hypercalorico">Hipercalórico (2445 kcal)</option>
                                             <option value="hyperproteico">Hiperproteico (2448 kcal)</option>
                                             <option value="hipocalorico">Hipocalórico (1486 kcal)</option>
                                             <option value="hipoproteico">Hipoproteico (1925 kcal)</option>
-                                            <option value="papilla_diabetico">Papilla Diabético (1537 kcal)</option>
-                                            <option value="papilla_liviana">Papilla Liviana (1587 kcal)</option>
                                             <option value="hipoglucidico">Hipoglucídico (1480 kcal)</option>
                                             <option value="isoglucidico_160">Iso Glucídico 160 (1530 kcal)</option>
                                             <option value="isoglucidico_200">Isoglucídico 200 (1634 kcal)</option>
+                                            <option value="liquido">Líquido (1200 kcal)</option>
+                                            <option value="cero">Régimen Cero (Ayuno)</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="mini-input" style="margin-top:2px;">
+                                        <label style="font-weight:700; color:var(--primary); font-size:0.75rem;">Vía de Alimentación</label>
+                                        <select id="viaAlimentacionSelect" style="padding:8px; border-radius:8px; border:1px solid rgba(0,0,0,0.1); width:100%; font-size:0.85rem;">
+                                            <option value="auto">Auto-detectar (Según Soporte Nutricional)</option>
+                                            <option value="oral">Vía Oral</option>
+                                            <option value="sng">Sonda Nasogástrica (SNG)</option>
+                                            <option value="sne">Sonda Nasoyeyunal (SNE)</option>
+                                            <option value="gtt">Gastrostomía (GTT)</option>
+                                            <option value="yey">Yeyunostomía (YEY)</option>
+                                            <option value="mixta">Mixta (Oral + Enteral)</option>
+                                            <option value="parenteral_central">Parenteral (Vía Central)</option>
+                                            <option value="parenteral_periferica">Parenteral (Vía Periférica)</option>
                                         </select>
                                     </div>
                                     
@@ -2170,15 +2194,27 @@
                     </div>
                 </div>
 
-                <div style="display:flex; gap:10px; margin-bottom:15px;">
+                <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:15px;">
                     <button id="btnGenerateNote" onclick="window.generateValoracionIngreso()"
-                        style="flex:1; background: #2c3e50; color:white; border:none; padding:10px 15px; border-radius:6px; font-weight:600; cursor:pointer; font-size:0.9rem;">
+                        style="flex:1; min-width:180px; background: #2c3e50; color:white; border:none; padding:10px 15px; border-radius:6px; font-weight:600; cursor:pointer; font-size:0.9rem;">
                         📝 Valoración de ingreso (VI)
                     </button>
-                    <button id="btnGenerateVGO" onclick="window.generateVGO()"
-                        style="flex:1; background: #27ae60; color:white; border:none; padding:10px 15px; border-radius:6px; font-weight:600; cursor:pointer; font-size:0.9rem;">
-                        📋 Generar VGO
-                    </button>
+                    <div style="flex:1.6; min-width:280px; display:flex; gap:6px; align-items:center;">
+                        <select id="vgoFormatSelect" onchange="window.updateVGOFormatPreference()"
+                            style="flex:1; padding:9px 10px; border:1px solid #10b981; border-radius:6px; font-size:0.8rem; font-weight:700; color:#065f46; background:#ecfdf5; outline:none; cursor:pointer;"
+                            title="Selecciona el formato de VGO que deseas generar">
+                            <option value="adult_std">🏥 VGO Adulto Estándar HRA</option>
+                            <option value="eval_nutri">📝 (EVALUACION POR NUTRICIONISTA)</option>
+                            <option value="detailed_anam">📋 VGO Detallada (Anamnesis + %VCT)</option>
+                            <option value="pediatric">👶 VGO Pediátrica</option>
+                            <option value="neonate">🍼 EVALUACIÓN NUTRICIONAL (Neonatología)</option>
+                            <option value="quick_evo">⚡ Evolución Nutricional Rápida</option>
+                        </select>
+                        <button id="btnGenerateVGO" onclick="window.generateVGO()"
+                            style="background: #27ae60; color:white; border:none; padding:10px 16px; border-radius:6px; font-weight:700; cursor:pointer; font-size:0.9rem; white-space:nowrap; display:flex; align-items:center; gap:5px;">
+                            📋 Generar VGO
+                        </button>
+                    </div>
                 </div>
                 <div id="clinicalNoteContainer" class="card"
                     style="display:none; padding:15px; border: 1px solid #bdc3c7; background: #fafbfc;">
@@ -2396,7 +2432,17 @@
                     <h2 style="margin:0; font-size:1.3rem; color:#312e81;">🏥 Gestión de Camas de la Sala</h2>
                     <p style="margin:5px 0 0 0; font-size:0.82rem; color:#64748b;" id="activeWardSubLabel">Cargando ubicación...</p>
                 </div>
-                <div style="display:flex; gap:10px; align-items:center;">
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <span id="wardReevalCountBadge" style="display:none; background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5; font-size:0.72rem; font-weight:800; padding:5px 10px; border-radius:12px; cursor:pointer;" onclick="document.getElementById('wardEvalFilterSelect').value='reeval'; window.renderWardBedsGrid();" title="Clic para ver solo los pacientes con ≥7 días sin reevaluación">⚠️ 0 por reevaluar</span>
+                    <div style="display:flex; gap:5px; align-items:center;">
+                        <select id="wardEvalFilterSelect" onchange="window.renderWardBedsGrid()" style="padding:6px 10px; border-radius:6px; border:1px solid #cbd5e1; font-size:0.75rem; font-weight:700; background:white; outline:none; cursor:pointer; color:#1e293b;" title="Filtrar pacientes por estado de evaluación">
+                            <option value="all" selected>👁️ Todos los Pacientes</option>
+                            <option value="reeval">⚠️ Reevaluar (≥7 días)</option>
+                            <option value="sin_vi_vgo">🔴 Sin VI ni VGO</option>
+                            <option value="solo_vi">🟡 Solo VI</option>
+                            <option value="vi_vgo">🟢 Con VI y VGO</option>
+                        </select>
+                    </div>
                     <button id="btnPasteCensus" class="btn-micro" style="background:#059669; color:white; font-weight:700;" onclick="window.openPasteCensusModal()">📋 Pegar Censo Dietools</button>
                     <button id="btnWardHistory" class="btn-micro" style="background:#4f46e5; color:white;" onclick="window.openWardHistory()">📁 Historial de Sala</button>
                     <button id="btnRefreshWard" class="btn-micro" style="background:var(--primary); color:white;" onclick="window.renderWardBedsGrid()">🔄 Actualizar</button>

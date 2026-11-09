@@ -306,7 +306,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (btnLogoutHeader) btnLogoutHeader.onclick = logout;
 
     const safelyInit = (fn, name) => {
-        try { fn(); } catch (e) { console.error(`âŒ Init Error (${name}):`, e); }
+        try { fn(); } catch (e) { console.error(`❌ Init Error (${name}):`, e); }
     };
 
     safelyInit(initCompactLayout, "CompactLayout");
@@ -395,7 +395,7 @@ window.login = async function () {
     }
 
     if (!supabaseClient) {
-        alert("ðŸ”´ Error Crítico: Supabase no se cargó. Revisa tu conexión a internet.");
+        alert("🔴 Error Crítico: Supabase no se cargó. Revisa tu conexión a internet.");
         return;
     }
 
@@ -1041,9 +1041,32 @@ function initCompactLayout() {
                 const tmt = parseFloat(document.getElementById('goalTotal')?.value) || 0;
 
                 // FULL STATE PERSISTENCE V3.51
-                const activeLocStr = localStorage.getItem('activeLocation');
+                const currentRegimen = (() => {
+                    const dietSelect = document.getElementById('oralDietType');
+                    if (dietSelect && dietSelect.value && dietSelect.value !== 'custom') {
+                        const rawOpt = dietSelect.options[dietSelect.selectedIndex]?.text || '';
+                        return rawOpt.replace(/\s*\(\d+\s*kcal\)/i, '').trim();
+                    }
+                    return AppState.patient.metadata?.regimen || '';
+                })();
+                const currentVia = document.getElementById('viaAlimentacionSelect')?.value || (AppState.patient.metadata?.via_alimentacion || 'auto');
+
                 const metadata = {
                     patient_type: AppState.patient.type || 'adult',
+                    regimen: currentRegimen,
+                    via_alimentacion: currentVia,
+                    fecha_nacimiento: document.getElementById('fechaNacimiento')?.value || '',
+                    evo_examenes: document.getElementById('evoExamenes')?.value || '',
+                    evo_tolerancia: document.getElementById('evoTolerancia')?.value || '',
+                    anamnesis: AppState.patient.anamnesis || {},
+                    neonatal: {
+                        eg_semanas: document.getElementById('egSemanas')?.value || '',
+                        eg_dias: document.getElementById('egDias')?.value || '',
+                        peso_nacimiento: document.getElementById('pesoNacimiento')?.value || '',
+                        talla_nacimiento: document.getElementById('tallaNacimiento')?.value || '',
+                        pc_nacimiento: document.getElementById('pcNacimiento')?.value || '',
+                        pcefalico: document.getElementById('pcefalico')?.value || ''
+                    },
                     weight_history: AppState.patient.weight_history || [],
                     location: activeLocStr ? JSON.parse(activeLocStr) : null,
                     num_ficha: document.getElementById('num_ficha')?.value || '',
@@ -1053,7 +1076,34 @@ function initCompactLayout() {
                     patologia_hta: document.getElementById('patologia_hta')?.checked || false,
                     patologia_erc: document.getElementById('patologia_erc')?.checked || false,
                     fecha_ingreso_servicio: document.getElementById('fecha_ingreso_servicio')?.value || '',
-                    nrs_score: document.getElementById('nrsTotalScore')?.innerText || 'No evaluado',
+                    nrs_score: (() => {
+                        const pType = AppState.patient.type || 'adult';
+                        if (pType === 'pediatric' || pType === 'neonate') {
+                            if (AppState.patient.strongkids && AppState.patient.strongkids.score !== undefined) return `${AppState.patient.strongkids.score} pts`;
+                            const skEl = document.getElementById('strongKidsTotalScore');
+                            if (skEl && skEl.innerText && skEl.innerText !== '--') return skEl.innerText;
+                        } else {
+                            if (AppState.patient.nrs2002 && AppState.patient.nrs2002.score !== undefined) return `${AppState.patient.nrs2002.score} pts`;
+                            const nrsEl = document.getElementById('nrsTotalScore');
+                            if (nrsEl && nrsEl.innerText && nrsEl.innerText !== '--') return nrsEl.innerText;
+                        }
+                        return 'No evaluado';
+                    })(),
+                    screening_score: (() => {
+                        const pType = AppState.patient.type || 'adult';
+                        if (pType === 'pediatric' || pType === 'neonate') {
+                            if (AppState.patient.strongkids && AppState.patient.strongkids.score !== undefined) return `${AppState.patient.strongkids.score} pts`;
+                            const skEl = document.getElementById('strongKidsTotalScore');
+                            if (skEl && skEl.innerText && skEl.innerText !== '--') return skEl.innerText;
+                        } else {
+                            if (AppState.patient.nrs2002 && AppState.patient.nrs2002.score !== undefined) return `${AppState.patient.nrs2002.score} pts`;
+                            const nrsEl = document.getElementById('nrsTotalScore');
+                            if (nrsEl && nrsEl.innerText && nrsEl.innerText !== '--') return nrsEl.innerText;
+                        }
+                        return 'No evaluado';
+                    })(),
+                    strongkids: AppState.patient.strongkids || {},
+                    nrs2002: AppState.patient.nrs2002 || {},
                     observaciones_generales: document.getElementById('observaciones_generales')?.value || '',
                     simulator: {
                         formula: document.getElementById('formulaSelect')?.value || "",
@@ -1110,7 +1160,7 @@ function initCompactLayout() {
                             return null;
                         }).filter(Boolean),
                         cribaje: {
-                            nrs: document.getElementById('nrs2002')?.value || "",
+                            nrs: document.getElementById('nrs2002')?.value || (AppState.patient.nrs2002 ? `${AppState.patient.nrs2002.score || 0} pts - ${AppState.patient.nrs2002.classification || ''}` : (document.getElementById('nrsTotalScore')?.innerText ? `${document.getElementById('nrsTotalScore').innerText} (${document.getElementById('nrsClassif')?.innerText || ''})` : "")),
                             vgs: document.getElementById('vgs')?.value || ""
                         },
                         gi: {
@@ -1137,7 +1187,40 @@ function initCompactLayout() {
                     user_id: AppState.user.id
                 };
 
-                const { error } = await supabaseClient.from('pacientes').insert([data]);
+                // Update local_ward_patients cache immediately if patient is in ward
+                try {
+                    let localWard = JSON.parse(localStorage.getItem('local_ward_patients') || '[]');
+                    const wIdx = localWard.findIndex(p => p.id === AppState.patient.id || (p.cama && p.cama === cama && cama !== ''));
+                    if (wIdx >= 0) {
+                        localWard[wIdx] = {
+                            ...localWard[wIdx],
+                            nombre,
+                            edad,
+                            peso_kg: peso,
+                            estatura_m: estatura,
+                            talla_cm: Math.round(estatura > 3 ? estatura : estatura * 100),
+                            sexo,
+                            diagnostico,
+                            metadata: {
+                                ...(localWard[wIdx].metadata || {}),
+                                ...metadata
+                            }
+                        };
+                        localStorage.setItem('local_ward_patients', JSON.stringify(localWard));
+                    }
+                } catch(e) {}
+
+                let error = null;
+                if (AppState.patient.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(AppState.patient.id)) {
+                    const res = await supabaseClient.from('pacientes').update(data).eq('id', AppState.patient.id);
+                    error = res.error;
+                } else {
+                    const res = await supabaseClient.from('pacientes').insert([data]);
+                    error = res.error;
+                    if (!error && res.data && res.data[0]) {
+                        AppState.patient.id = res.data[0].id;
+                    }
+                }
 
                 if (!error) {
                     showToast("✅ Ficha completa guardada en historial");
@@ -1732,7 +1815,7 @@ window.openQuickView = async (id) => {
 
     const html = `
         <div style="text-align:center; margin-bottom:15px;">
-            <div style="font-size:2.5rem; margin-bottom:5px;">ðŸ›Œ</div>
+            <div style="font-size:2.5rem; margin-bottom:5px;">🛏️</div>
             <h3 style="color:var(--primary); margin:0;">${p.nombre}</h3>
             <span style="font-size:0.8rem; background:#f0f2f5; padding:2px 8px; border-radius:10px;">Cama ${p.cama || 'S/N'}</span>
         </div>
@@ -1799,14 +1882,14 @@ async function generateShiftHandoff() {
                 <td><b>${p.nombre}</b><br><span style="font-size:0.75rem; color:#555;">${p.edad}a | ${p.peso_kg}kg</span></td>
                 <td>${p.diagnostico || '--'}</td>
                 <td>${p.tmt ? Math.round(p.tmt) : '--'} kcal</td>
-                <td>${p.estado_sala === 'critico' ? '⚠️ CRÍTICO' : 'En Curso'}</td>
+                <td>${p.estado_sala === 'critico' ? '⚠️  CRÍTICO' : 'En Curso'}</td>
             </tr>
         `;
     });
 
     const reportHTML = `
         <div style="text-align:center; margin-bottom:20px; font-family:'Poppins', sans-serif;">
-            <h2 style="margin:0; color:#333;">ðŸ¥ Reporte Entrega de Turno: SEDILE HRA</h2>
+            <h2 style="margin:0; color:#333;">🏥 Reporte Entrega de Turno: SEDILE HRA</h2>
             <p style="margin:5px 0 0 0; color:#666;">Generado el: ${new Date().toLocaleString('es-CL')}</p>
         </div>
         <table class="print-table">
@@ -2200,7 +2283,7 @@ function initEvolutionLogic() {
             }
 
             btnLog.disabled = true;
-            btnLog.innerText = "â³ Registrando...";
+            btnLog.innerText = "⏳ Registrando...";
 
             try {
                 const metadata = {
@@ -2254,6 +2337,7 @@ window.loadPatient = async (id) => {
 
         AppState.patient.id = data.id;
         AppState.patient.ia_report = data.ia_report || null;
+        AppState.patient.metadata = JSON.parse(JSON.stringify(data.metadata || {}));
 
         if (data.metadata && data.metadata.patient_type) {
             const pType = data.metadata.patient_type;
@@ -2321,23 +2405,107 @@ window.loadPatient = async (id) => {
         if (document.getElementById('observaciones_generales')) {
             document.getElementById('observaciones_generales').value = (data.metadata && data.metadata.observaciones_generales) || '';
         }
+        if (document.getElementById('fechaNacimiento')) {
+            document.getElementById('fechaNacimiento').value = (data.metadata && data.metadata.fecha_nacimiento) || '';
+        }
+        if (document.getElementById('evoExamenes')) {
+            document.getElementById('evoExamenes').value = (data.metadata && data.metadata.evo_examenes) || '';
+        }
+        if (document.getElementById('evoTolerancia')) {
+            document.getElementById('evoTolerancia').value = (data.metadata && data.metadata.evo_tolerancia) || '';
+        }
+        if (document.getElementById('diagnosticoPES')) {
+            document.getElementById('diagnosticoPES').value = (data.metadata && (data.metadata.assessment?.pes || data.metadata.pes)) || '';
+        }
+
+        // Restore Anamnesis Symptoms & Gastro Signs
+        if (data.metadata && data.metadata.anamnesis) {
+            AppState.patient.anamnesis = JSON.parse(JSON.stringify(data.metadata.anamnesis));
+            Object.entries(AppState.patient.anamnesis).forEach(([id, val]) => {
+                if (typeof window.setToggleState === 'function') window.setToggleState(id, val);
+            });
+        }
+
+        // Restore Anthropometric Assessment
+        if (data.metadata && data.metadata.assessment) {
+            const ass = data.metadata.assessment;
+            if (ass.braquial && document.getElementById('cbraquial')) document.getElementById('cbraquial').value = ass.braquial;
+            if (ass.cintura && document.getElementById('ccintura')) document.getElementById('ccintura').value = ass.cintura;
+            if (ass.pantorrilla && document.getElementById('cpantorrilla')) document.getElementById('cpantorrilla').value = ass.pantorrilla;
+            if (ass.atr && document.getElementById('altrodilla')) document.getElementById('altrodilla').value = ass.atr;
+            if (ass.pliegues) {
+                if (ass.pliegues.pt && document.getElementById('ptricipital')) document.getElementById('ptricipital').value = ass.pliegues.pt;
+                if (ass.pliegues.pb && document.getElementById('pbicipital')) document.getElementById('pbicipital').value = ass.pliegues.pb;
+                if (ass.pliegues.ps && document.getElementById('piliaco')) document.getElementById('piliaco').value = ass.pliegues.ps;
+                if (ass.pliegues.pa && document.getElementById('pabdominal')) document.getElementById('pabdominal').value = ass.pliegues.pa;
+            }
+            if (ass.edema && document.getElementById('edemaGrade')) document.getElementById('edemaGrade').value = ass.edema;
+        }
+
+        // Restore Neonatal Fields
+        if (data.metadata && data.metadata.neonatal) {
+            const neo = data.metadata.neonatal;
+            if (neo.eg_semanas && document.getElementById('egSemanas')) document.getElementById('egSemanas').value = neo.eg_semanas;
+            if (neo.eg_dias && document.getElementById('egDias')) document.getElementById('egDias').value = neo.eg_dias;
+            if (neo.peso_nacimiento && document.getElementById('pesoNacimiento')) document.getElementById('pesoNacimiento').value = neo.peso_nacimiento;
+            if (neo.talla_nacimiento && document.getElementById('tallaNacimiento')) document.getElementById('tallaNacimiento').value = neo.talla_nacimiento;
+            if (neo.pc_nacimiento && document.getElementById('pcNacimiento')) document.getElementById('pcNacimiento').value = neo.pc_nacimiento;
+            if (neo.pcefalico && document.getElementById('pcefalico')) document.getElementById('pcefalico').value = neo.pcefalico;
+        }
+
+        // Restore Screening (NRS 2002 & STRONGkids)
+        if (data.metadata && data.metadata.nrs2002) {
+            AppState.patient.nrs2002 = JSON.parse(JSON.stringify(data.metadata.nrs2002));
+            if (AppState.patient.nrs2002.initialAnswers) {
+                Object.entries(AppState.patient.nrs2002.initialAnswers).forEach(([qId, val]) => {
+                    if (typeof window.setNrsInitialState === 'function') window.setNrsInitialState(qId, val);
+                });
+            }
+            if (typeof window.calculateNRS2002 === 'function') window.calculateNRS2002();
+        }
+        if (data.metadata && data.metadata.strongkids) {
+            AppState.patient.strongkids = JSON.parse(JSON.stringify(data.metadata.strongkids));
+            if (typeof window.calculateStrongKids === 'function') window.calculateStrongKids();
+        }
+
+        // Restore viaAlimentacionSelect if stored
+        const viaSelect = document.getElementById('viaAlimentacionSelect');
+        if (viaSelect) {
+            viaSelect.value = data.metadata?.via_alimentacion || 'auto';
+        }
 
         // Auto select Ingesta Oral diet from Dietools regimen metadata
         if (data.metadata && data.metadata.regimen) {
-            const regText = data.metadata.regimen.toLowerCase();
+            const regText = data.metadata.regimen.toLowerCase().trim();
             const oralSelect = document.getElementById('oralDietType');
             if (oralSelect) {
-                if (regText.includes('hipoglucidica') || regText.includes('hpgl')) oralSelect.value = 'hipoglucidica';
-                else if (regText.includes('hiperproteica') || regText.includes('hpprt')) oralSelect.value = 'hyperproteico';
-                else if (regText.includes('papilla') && regText.includes('livian')) oralSelect.value = 'papilla_liviana';
-                else if (regText.includes('papilla')) oralSelect.value = 'papilla_diabetico';
-                else if (regText.includes('hiposodica')) oralSelect.value = 'hiposodico';
-                else if (regText.includes('liviana')) oralSelect.value = 'liviano';
-                else if (regText.includes('blanda')) oralSelect.value = 'blando_sin_residuos';
-                else if (regText.includes('hipercalorica')) oralSelect.value = 'hypercalorico';
-                else if (regText.includes('hipocalorica')) oralSelect.value = 'hipocalorico';
-                else if (regText.includes('hipoproteica')) oralSelect.value = 'hipoproteico';
-                else oralSelect.value = 'custom';
+                let matched = false;
+                for (let i = 0; i < oralSelect.options.length; i++) {
+                    const optText = oralSelect.options[i].text.toLowerCase();
+                    const cleanOpt = optText.replace(/\s*\(\d+\s*kcal\)/i, '').trim();
+                    const optVal = oralSelect.options[i].value.toLowerCase();
+                    if (optVal !== 'custom' && (optText.includes(regText) || regText.includes(cleanOpt) || cleanOpt.includes(regText))) {
+                        oralSelect.selectedIndex = i;
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) {
+                    if (regText.includes('hipoglucidica') || regText.includes('hpgl') || regText.includes('diabetico') || regText.includes('chandi')) oralSelect.value = 'papilla_diabetico';
+                    else if (regText.includes('hiperproteica') || regText.includes('hpprt')) oralSelect.value = 'hyperproteico';
+                    else if (regText.includes('papilla') && regText.includes('livian')) oralSelect.value = 'papilla_liviana';
+                    else if (regText.includes('papilla')) oralSelect.value = 'papilla';
+                    else if (regText.includes('hiposodica') || regText.includes('hpsd')) oralSelect.value = 'hiposodico';
+                    else if (regText.includes('chanli') || regText.includes('liviana') || regText.includes('liv')) oralSelect.value = 'liviano';
+                    else if (regText.includes('blanda') || regText.includes('sres') || regText.includes('sin residuo')) oralSelect.value = 'blando_sin_residuos';
+                    else if (regText.includes('hipercalorica')) oralSelect.value = 'hypercalorico';
+                    else if (regText.includes('hipocalorica')) oralSelect.value = 'hipocalorico';
+                    else if (regText.includes('hipoproteica')) oralSelect.value = 'hipoproteico';
+                    else if (regText.includes('cero') || regText.includes('regce') || regText.includes('ayuno')) oralSelect.value = 'cero';
+                    else if (regText.includes('liquido') || regText.includes('liqfr')) oralSelect.value = 'liquido';
+                    else if (regText.includes('comun') || regText.includes('normal')) oralSelect.value = 'comun';
+                    else oralSelect.value = 'custom';
+                }
 
                 oralSelect.dispatchEvent(new Event('change'));
             }
@@ -2383,6 +2551,13 @@ window.loadPatient = async (id) => {
                 } else {
                     document.getElementById('btnModeGkg')?.click();
                 }
+            }
+            if (sim.goal_total) {
+                const gtEl = document.getElementById('goalTotal');
+                if (gtEl) gtEl.value = sim.goal_total;
+            } else if (data.tmt) {
+                const gtEl = document.getElementById('goalTotal');
+                if (gtEl) gtEl.value = data.tmt;
             }
             if (sim.goal_prot) document.getElementById('goalProtKg').value = sim.goal_prot;
             if (sim.goal_cho) document.getElementById('goalCHOKg').value = sim.goal_cho;
@@ -3517,6 +3692,7 @@ function renderPediatricZScores() {
     let zHFA = getZScore('hfa', m, p.sexo, cm);
     let zBMI = getZScore('bmi', m, p.sexo, p.bmi);
     let zWFH = getZScore('wfh', cm, p.sexo, p.peso);
+    p.zScores = { wfa: zWFA, hfa: zHFA, bmi: zBMI, wfh: zWFH };
 
     let html = '';
 
@@ -3526,9 +3702,9 @@ function renderPediatricZScores() {
     }
 
     if (specCond === 'down') {
-        html += `<div style="grid-column:1/-1; background:rgba(211,84,0,0.1); padding:4px; border-radius:4px; margin-bottom:4px; color:#d35400; font-size:0.65rem; text-align:center;">ðŸ“Š <b>Zemel (S. Down):</b> Evaluando curvas LMS vía Interpolación Geométrica (Hitos).</div>`;
+        html += `<div style="grid-column:1/-1; background:rgba(211,84,0,0.1); padding:4px; border-radius:4px; margin-bottom:4px; color:#d35400; font-size:0.65rem; text-align:center;">📊 <b>Zemel (S. Down):</b> Evaluando curvas LMS vía Interpolación Geométrica (Hitos).</div>`;
     } else if (specCond.startsWith('cp_')) {
-        html += `<div style="grid-column:1/-1; background:rgba(142,68,173,0.1); padding:4px; border-radius:4px; margin-bottom:4px; color:#8e44ad; font-size:0.65rem; text-align:center;">ðŸ“Š <b>Brooks (Parálisis Cerebral):</b> Evaluando curvas GMFCS vía Interpolación Geométrica.</div>`;
+        html += `<div style="grid-column:1/-1; background:rgba(142,68,173,0.1); padding:4px; border-radius:4px; margin-bottom:4px; color:#8e44ad; font-size:0.65rem; text-align:center;">📊 <b>Brooks (Parálisis Cerebral):</b> Evaluando curvas GMFCS vía Interpolación Geométrica.</div>`;
     }
 
     const makeBadge = (title, z, textOverride = null, colorOverride = null) => {
@@ -3552,7 +3728,10 @@ function renderPediatricZScores() {
         }
 
         const diagHtml = diag ? `<span style="font-size:0.55rem; padding:2px 3px; background:${color}20; border-radius:4px; font-weight:700;">${diag}</span>` : '';
-        return `<div style="background:#fff; border:1px solid ${color}; padding:5px; border-radius:6px; text-align:center; box-shadow:0 2px 4px rgba(0,0,0,0.02);">
+        let badgeIdAttr = '';
+        if (title.includes('IMC/E') || title.includes('P/T')) badgeIdAttr = ' id="valZBMI"';
+        else if (title.includes('T/E') || title.includes('Talla/Edad')) badgeIdAttr = ' id="valZHFA"';
+        return `<div${badgeIdAttr} style="background:#fff; border:1px solid ${color}; padding:5px; border-radius:6px; text-align:center; box-shadow:0 2px 4px rgba(0,0,0,0.02);">
             <div style="font-size:0.55rem; color:#666; font-weight:600; line-height:1.1;">${title}</div>
             <div style="font-size:0.85rem; font-weight:800; color:${color}; display:flex; justify-content:center; align-items:baseline; gap:4px; margin-top:2px;">
                 ${displayVal}
@@ -4010,8 +4189,15 @@ function initSimulatorLogic() {
     // Escuchas para regímenes predefinidos y barra de consumo
     const oralDietType = document.getElementById('oralDietType');
     const oralIntakePercent = document.getElementById('oralIntakePercent');
+    const viaAlimentacionSelect = document.getElementById('viaAlimentacionSelect');
     if (oralDietType) oralDietType.addEventListener('change', updateOralIntakePreset);
     if (oralIntakePercent) oralIntakePercent.addEventListener('input', updateOralIntakeSlider);
+    if (viaAlimentacionSelect) {
+        viaAlimentacionSelect.addEventListener('change', () => {
+            if (!AppState.patient.metadata) AppState.patient.metadata = {};
+            AppState.patient.metadata.via_alimentacion = viaAlimentacionSelect.value;
+        });
+    }
 
     // Si el usuario edita de forma manual los campos, revertir a "Personalizado" y 100% de barra
     document.querySelectorAll('.input-oral').forEach(inp => {
@@ -4070,12 +4256,12 @@ function checkFavoriteStatus() {
     if (!btn) return;
 
     if (AppState.favorites.includes(fId)) {
-        btn.innerText = 'â­';
+        btn.innerText = '⭐';
         btn.style.background = 'gold';
         btn.style.color = 'white';
         btn.style.borderColor = 'gold';
     } else {
-        btn.innerText = 'â˜†';
+        btn.innerText = '☆';
         btn.style.background = 'transparent';
         btn.style.color = 'var(--primary)';
         btn.style.borderColor = 'var(--primary)';
@@ -4137,7 +4323,7 @@ function updateFormulaSelect(filter = "") {
             sortedFormulas.filter(i => i.cat === cat).forEach(item => {
                 const opt = document.createElement('option');
                 opt.value = item.id;
-                const star = AppState.favorites.includes(item.id) ? 'â­ ' : '';
+                const star = AppState.favorites.includes(item.id) ? '⭐ ' : '';
                 opt.innerText = star + item.name;
                 group.appendChild(opt);
             });
@@ -4361,37 +4547,331 @@ function renderFormulaBInputs() {
     }
 }
 
-// --- CONSTANTE DE REGÍMENES CLÍNICOS PEDIÁTRICOS ---
+// --- CONSTANTE DE REGÍMENES CLÍNICOS ---
 const ORAL_PRESETS = {
-    blando_sin_residuos: { kcal: 1874, prot: 74, cho: 309, lip: 38 },
+    comun: { kcal: 2000, prot: 80, cho: 280, lip: 60 },
     liviano: { kcal: 2055, prot: 84.5, cho: 292, lip: 46.6 },
+    blando: { kcal: 1900, prot: 75, cho: 270, lip: 55 },
+    blando_sin_residuos: { kcal: 1874, prot: 74, cho: 309, lip: 38 },
+    papilla: { kcal: 1600, prot: 70, cho: 230, lip: 45 },
+    papilla_liviana: { kcal: 1587, prot: 63.5, cho: 217, lip: 47.2 },
+    papilla_diabetico: { kcal: 1537, prot: 77.2, cho: 192, lip: 47.5 },
     hiposodico: { kcal: 2063, prot: 82, cho: 297, lip: 45.7 },
     hypercalorico: { kcal: 2445, prot: 113.8, cho: 366, lip: 48.1 },
     hyperproteico: { kcal: 2448, prot: 132, cho: 348, lip: 46 },
     hipocalorico: { kcal: 1486, prot: 75.7, cho: 165, lip: 44 },
     hipoproteico: { kcal: 1925, prot: 25, cho: 314, lip: 46 },
-    papilla_diabetico: { kcal: 1537, prot: 77.2, cho: 192, lip: 47.5 },
-    papilla_liviana: { kcal: 1587, prot: 63.5, cho: 217, lip: 47.2 },
     hipoglucidico: { kcal: 1480, prot: 97.2, cho: 151, lip: 44.3 },
     isoglucidico_160: { kcal: 1530, prot: 97.4, cho: 165, lip: 41 },
-    isoglucidico_200: { kcal: 1634, prot: 111.5, cho: 198, lip: 43 }
+    isoglucidico_200: { kcal: 1634, prot: 111.5, cho: 198, lip: 43 },
+    liquido: { kcal: 1200, prot: 45, cho: 190, lip: 30 },
+    cero: { kcal: 0, prot: 0, cho: 0, lip: 0 }
+};
+
+window.detectFeedingRoute = () => {
+    const viaSel = document.getElementById('viaAlimentacionSelect')?.value;
+    if (viaSel && viaSel !== 'auto') {
+        return viaSel;
+    }
+    
+    // Auto-detection
+    const hasEnteral = !!(document.getElementById('formulaSelect')?.value && parseFloat(document.getElementById('volume')?.value) > 0);
+    const hasIV = !!(document.getElementById('ivType')?.value && parseFloat(document.getElementById('ivVolume')?.value) > 0);
+    const dietSelect = document.getElementById('oralDietType');
+    const oralKcal = parseFloat(document.getElementById('oralKcal')?.value) || 0;
+    const isCero = dietSelect && dietSelect.value === 'cero';
+    const hasOral = (dietSelect && dietSelect.value && dietSelect.value !== 'custom' && !isCero) || oralKcal > 0;
+
+    if (isCero) return 'cero';
+    if (hasIV && !hasEnteral && !hasOral) return 'parenteral_central';
+    if (hasEnteral && hasOral) return 'mixta';
+    if (hasEnteral) return 'sng';
+    if (hasOral) return 'oral';
+    return 'oral';
+};
+
+window.getFeedingRouteLabel = (routeKey) => {
+    switch (routeKey) {
+        case 'oral': return 'Vía Oral';
+        case 'sng': return 'Sonda Nasogástrica (SNG)';
+        case 'sne': return 'Sonda Nasoyeyunal (SNE)';
+        case 'gtt': return 'Gastrostomía (GTT)';
+        case 'yey': return 'Yeyunostomía (YEY)';
+        case 'mixta': return 'Vía Mixta (Oral + Enteral)';
+        case 'parenteral_central': return 'Vía Central (Parenteral)';
+        case 'parenteral_periferica': return 'Vía Periférica (Parenteral)';
+        case 'cero': return 'Régimen Cero (Ayuno)';
+        default: return 'Vía Oral';
+    }
+};
+
+window.getSelectedRegimenName = () => {
+    const dietSelect = document.getElementById('oralDietType');
+    if (dietSelect && dietSelect.value && dietSelect.value !== 'custom') {
+        const rawOpt = dietSelect.options[dietSelect.selectedIndex]?.text || '';
+        return rawOpt.replace(/\s*\(\d+\s*kcal\)/i, '').trim();
+    }
+    if (AppState.patient?.metadata?.regimen) {
+        return AppState.patient.metadata.regimen.trim();
+    }
+    return '';
+};
+
+window.syncOralDietToWardAndState = () => {
+    const dietSelect = document.getElementById('oralDietType');
+    if (!dietSelect) return;
+    let cleanName = '';
+    if (dietSelect.value !== 'custom') {
+        const rawOpt = dietSelect.options[dietSelect.selectedIndex]?.text || '';
+        cleanName = rawOpt.replace(/\s*\(\d+\s*kcal\)/i, '').trim();
+    } else {
+        cleanName = AppState.patient?.metadata?.regimen || '';
+    }
+
+    if (!AppState.patient.metadata) AppState.patient.metadata = {};
+    if (cleanName) {
+        AppState.patient.metadata.regimen = cleanName;
+    }
+
+    const patientId = AppState.patient.id;
+    if (patientId) {
+        // 1. Update local_ward_patients
+        try {
+            let localCache = JSON.parse(localStorage.getItem('local_ward_patients') || '[]');
+            const pIdx = localCache.findIndex(p => p.id === patientId || (p.cama && p.cama === AppState.patient.cama && p.cama !== ''));
+            if (pIdx >= 0) {
+                if (!localCache[pIdx].metadata) localCache[pIdx].metadata = {};
+                localCache[pIdx].metadata.regimen = cleanName;
+                localStorage.setItem('local_ward_patients', JSON.stringify(localCache));
+            }
+        } catch(e) {}
+
+        // 2. Update visible table cell if rendered
+        const row = document.querySelector(`tr[data-patient-id="${patientId}"]`);
+        if (row) {
+            const dietInput = row.querySelector('.col-dieta textarea, .col-dieta input');
+            if (dietInput && cleanName) {
+                dietInput.value = cleanName;
+            }
+        }
+
+        // 3. Update Supabase if valid UUID
+        if (cleanName && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(patientId)) {
+            if (typeof window.quickUpdatePatientField === 'function') {
+                window.quickUpdatePatientField(patientId, 'regimen', cleanName);
+            }
+        }
+    }
+};
+
+window.generateDietoterapiaString = (kcalFinal, protFinal, pesoCalc) => {
+    let aporteStr = `${kcalFinal} kcal`;
+    if (pesoCalc > 0) {
+        aporteStr += ` (${(kcalFinal / pesoCalc).toFixed(1)} kcal/kg)`;
+    }
+    aporteStr += ` / ${protFinal} g proteína`;
+    if (pesoCalc > 0) {
+        aporteStr += ` (${(parseFloat(protFinal) / pesoCalc).toFixed(2)} g/kg)`;
+    }
+
+    const regimenName = window.getSelectedRegimenName ? window.getSelectedRegimenName() : '';
+    const route = window.detectFeedingRoute ? window.detectFeedingRoute() : 'oral';
+    const routeLabel = window.getFeedingRouteLabel ? window.getFeedingRouteLabel(route) : 'Vía Oral';
+
+    // Enteral info
+    let enteralStr = '';
+    const fId = document.getElementById('formulaSelect')?.value;
+    const formula = AppState.formulas?.find(f => f.id === fId);
+    const volVal = parseFloat(document.getElementById('volume')?.value) || 0;
+    const timesVal = parseInt(document.getElementById('volumeTimes')?.value) || 1;
+    const volTotal = volVal * timesVal;
+    if (formula && volTotal > 0) {
+        enteralStr = `Soporte Enteral: ${formula.name} (${timesVal > 1 ? `${volVal} ml x ${timesVal}` : `${volTotal} ml`}`;
+        const dilVal = document.getElementById('dilution')?.value;
+        if (dilVal && parseFloat(dilVal) > 0) enteralStr += `, Dilución: ${dilVal}%`;
+        enteralStr += `)`;
+    }
+
+    // Parenteral info
+    let ivStr = '';
+    const ivType = document.getElementById('ivType')?.value;
+    const ivVol = parseFloat(document.getElementById('ivVolume')?.value) || 0;
+    if (ivType && ivVol > 0) {
+        ivStr = `Soporte Parenteral: ${ivType} (${ivVol} ml)`;
+    }
+
+    // Modules info
+    let modParts = [];
+    if (parseFloat(document.getElementById('modNessucar')?.value) > 0) modParts.push(`Nessucar ${document.getElementById('modNessucar').value}g`);
+    if (parseFloat(document.getElementById('modMCT')?.value) > 0) modParts.push(`MCT Oil ${document.getElementById('modMCT').value}g`);
+    if (parseFloat(document.getElementById('modEnterex')?.value) > 0) modParts.push(`Enterex ${document.getElementById('modEnterex').value}g`);
+    if (parseFloat(document.getElementById('modBanatrol')?.value) > 0) modParts.push(`Banatrol ${document.getElementById('modBanatrol').value}g`);
+    if (parseFloat(document.getElementById('modProteinex')?.value) > 0) modParts.push(`Proteinex ${document.getElementById('modProteinex').value}g`);
+    if (parseFloat(document.getElementById('modFresubin')?.value) > 0) modParts.push(`Fresubin Protein ${document.getElementById('modFresubin').value}g`);
+    const modStr = modParts.length > 0 ? `Módulos: ${modParts.join(', ')}` : '';
+
+    let baseDiet = '';
+    if (route === 'cero' || (regimenName && /cero|ayuno/i.test(regimenName))) {
+        baseDiet = 'Régimen Cero (Ayuno)';
+    } else if (route === 'oral' || (!enteralStr && !ivStr)) {
+        if (regimenName) {
+            baseDiet = `Régimen ${regimenName} distribuido en 4 servicios principales`;
+        } else {
+            baseDiet = `Régimen común según indicación clínica distribuido en 4 servicios principales`;
+        }
+    } else if (route === 'mixta' || (regimenName && enteralStr)) {
+        const oralPart = regimenName ? `Régimen ${regimenName} distribuido en 4 servicios principales` : 'Alimentación Oral';
+        baseDiet = `${oralPart} + ${enteralStr} por ${routeLabel}`;
+    } else if (enteralStr) {
+        baseDiet = `${enteralStr} por ${routeLabel}`;
+    } else if (ivStr) {
+        baseDiet = `${ivStr} por ${routeLabel}`;
+    } else {
+        baseDiet = regimenName ? `Régimen ${regimenName}` : 'Régimen según indicación clínica';
+    }
+
+    let result = baseDiet;
+    if (modStr) result += ` | ${modStr}`;
+    result += ` | Aporte: ${aporteStr}`;
+    return result;
+};
+
+window.getEffectiveNutritionalGoal = () => {
+    const p = AppState.patient || {};
+    const pesoFisico = p.peso || parseFloat(document.getElementById('peso')?.value) || 0;
+    const pesoCalc = document.getElementById('pesoCalculoSelect')?.value === 'real' ? pesoFisico : (p.peso_calculo || pesoFisico);
+
+    // 1. Direct goalTotal input
+    const inpGoal = parseFloat(document.getElementById('goalTotal')?.value);
+    if (!isNaN(inpGoal) && inpGoal > 0) return inpGoal;
+
+    // 2. Kcal/kg Box * peso
+    const kcalBox = parseFloat(document.getElementById('goalKcalBox')?.value);
+    if (!isNaN(kcalBox) && kcalBox > 0 && pesoCalc > 0) return Math.round(kcalBox * pesoCalc);
+
+    // 3. Official GET displayed in UI
+    const valGetEl = document.getElementById('valGET');
+    if (valGetEl && valGetEl.innerText) {
+        const parsed = parseFloat(valGetEl.innerText.replace(/[^0-9.]/g, ''));
+        if (!isNaN(parsed) && parsed > 0) return Math.round(parsed);
+    }
+
+    // 4. Patient state stored values
+    if (p.tmt && p.tmt > 0) return Math.round(p.tmt);
+    if (p.tmt_calculated && p.tmt_calculated > 0) return Math.round(p.tmt_calculated);
+    if (p.factorial_calculated && p.factorial_calculated > 0) return Math.round(p.factorial_calculated);
+
+    // 5. resFactorial or resTMB
+    const resFactEl = document.getElementById('resFactorial');
+    if (resFactEl && resFactEl.innerText) {
+        const parsed = parseFloat(resFactEl.innerText.replace(/[^0-9.]/g, ''));
+        if (!isNaN(parsed) && parsed > 0) return Math.round(parsed);
+    }
+    const resTmbEl = document.getElementById('resTMB');
+    if (resTmbEl && resTmbEl.innerText) {
+        const parsed = parseFloat(resTmbEl.innerText.replace(/[^0-9.]/g, ''));
+        if (!isNaN(parsed) && parsed > 0) return Math.round(parsed);
+    }
+
+    // 6. Factor Kcal input * peso
+    const factorKcal = parseFloat(document.getElementById('factorKcal')?.value);
+    if (!isNaN(factorKcal) && factorKcal > 0 && pesoCalc > 0) return Math.round(factorKcal * pesoCalc);
+
+    return 0;
+};
+
+window.getEffectiveMacroRequirements = () => {
+    if (typeof updateMacroGoals === 'function') {
+        try { updateMacroGoals(); } catch(e) {}
+    }
+
+    const p = AppState.patient || {};
+    const pesoFisico = p.peso || parseFloat(document.getElementById('peso')?.value) || 0;
+    const pesoCalc = document.getElementById('pesoCalculoSelect')?.value === 'real' ? pesoFisico : (p.peso_calculo || pesoFisico);
+
+    const goal = window.getEffectiveNutritionalGoal ? window.getEffectiveNutritionalGoal() : (parseFloat(document.getElementById('goalTotal')?.value) || 0);
+
+    const valP = parseFloat(document.getElementById('goalProtKg')?.value) || 0;
+    const valC = parseFloat(document.getElementById('goalCHOKg')?.value) || 0;
+    const valL = parseFloat(document.getElementById('goalLipKg')?.value) || 0;
+
+    let pTotal = parseFloat(document.getElementById('goalProt')?.dataset.val) || 0;
+    let cTotal = parseFloat(document.getElementById('goalCHO')?.dataset.val) || 0;
+    let lTotal = parseFloat(document.getElementById('goalLip')?.dataset.val) || 0;
+
+    let pPct = 0;
+    let cPct = 0;
+    let lPct = 0;
+
+    const isPctMode = typeof macroGoalMode !== 'undefined' && macroGoalMode === 'pct';
+
+    if (isPctMode) {
+        pPct = valP;
+        cPct = valC;
+        lPct = valL;
+
+        if (pTotal === 0 && goal > 0 && pPct > 0) {
+            pTotal = (goal * (pPct / 100)) / 4;
+        }
+        if (cTotal === 0 && goal > 0 && cPct > 0) {
+            cTotal = (goal * (cPct / 100)) / 4;
+        }
+        if (lTotal === 0 && goal > 0 && lPct > 0) {
+            lTotal = (goal * (lPct / 100)) / 9;
+        }
+    } else {
+        if (pTotal === 0 && valP > 0 && pesoCalc > 0) {
+            pTotal = valP * pesoCalc;
+        }
+        if (cTotal === 0 && valC > 0 && pesoCalc > 0) {
+            cTotal = valC * pesoCalc;
+        }
+        if (lTotal === 0 && valL > 0 && pesoCalc > 0) {
+            lTotal = valL * pesoCalc;
+        }
+
+        if (goal > 0) {
+            pPct = parseFloat(((pTotal * 4) / goal * 100).toFixed(0));
+            cPct = parseFloat(((cTotal * 4) / goal * 100).toFixed(0));
+            lPct = parseFloat(((lTotal * 9) / goal * 100).toFixed(0));
+        }
+    }
+
+    const factorKcalVal = parseFloat(document.getElementById('factorKcal')?.value) || (pesoCalc > 0 && goal > 0 ? (goal / pesoCalc).toFixed(0) : 0);
+    const factorProtVal = (!isPctMode && valP > 0) ? valP.toFixed(1) : (pesoCalc > 0 && pTotal > 0 ? (pTotal / pesoCalc).toFixed(1) : 0);
+
+    return {
+        goal: Math.round(goal),
+        pTotal,
+        cTotal,
+        lTotal,
+        pPct: Math.round(pPct),
+        cPct: Math.round(cPct),
+        lPct: Math.round(lPct),
+        factorKcalVal,
+        factorProtVal
+    };
 };
 
 function updateOralIntakePreset() {
-    const diet = document.getElementById('oralDietType').value;
-    const percent = parseFloat(document.getElementById('oralIntakePercent').value) || 100;
+    const dietSelect = document.getElementById('oralDietType');
+    if (!dietSelect) return;
+    const diet = dietSelect.value;
+    const percent = parseFloat(document.getElementById('oralIntakePercent')?.value) || 100;
     
-    if (diet === 'custom') return;
-    
-    const preset = ORAL_PRESETS[diet];
-    if (preset) {
-        document.getElementById('oralKcal').value = Math.round(preset.kcal * (percent / 100));
-        document.getElementById('oralProt').value = (preset.prot * (percent / 100)).toFixed(1);
-        document.getElementById('oralCHO').value = (preset.cho * (percent / 100)).toFixed(1);
-        document.getElementById('oralLip').value = (preset.lip * (percent / 100)).toFixed(1);
-        
-        runSimulation();
+    if (diet !== 'custom') {
+        const preset = ORAL_PRESETS[diet];
+        if (preset) {
+            document.getElementById('oralKcal').value = Math.round(preset.kcal * (percent / 100));
+            document.getElementById('oralProt').value = (preset.prot * (percent / 100)).toFixed(1);
+            document.getElementById('oralCHO').value = (preset.cho * (percent / 100)).toFixed(1);
+            document.getElementById('oralLip').value = (preset.lip * (percent / 100)).toFixed(1);
+            runSimulation();
+        }
     }
+
+    // Sync selected regimen with patient state and ward censo
+    window.syncOralDietToWardAndState();
 }
 
 function updateOralIntakeSlider() {
@@ -4779,7 +5259,7 @@ function runSimulation() {
             proTracker.innerHTML = `
                 <div style="margin-top:10px; margin-bottom:10px; background:${ptColor}10; border:2px dashed ${ptColor}; padding:10px; border-radius:8px; display:flex; justify-content:space-between; align-items:center;">
                     <div style="font-weight:700; color:${ptColor}; font-size:1rem;">
-                        ðŸ©¸ Proteína Diaria: <span style="font-size:1.2rem; font-weight:800;">${pt.toFixed(2)}</span> <span style="font-size:0.8rem;">g/kg/d</span>
+                        🩸 Proteína Diaria: <span style="font-size:1.2rem; font-weight:800;">${pt.toFixed(2)}</span> <span style="font-size:0.8rem;">g/kg/d</span>
                     </div>
                     <div style="background:${ptColor}; color:#fff; font-size:0.7rem; padding:4px 8px; border-radius:6px; font-weight:800;">
                         ${ptL}
@@ -4805,13 +5285,13 @@ function runSimulation() {
         const getNPCDiagnosis = (ratio, isPed) => {
             if (isPed) {
                 if (ratio < 90) return '⚠️ ¡Demasiada Proteína! (Riesgo Renal)';
-                if (ratio <= 150) return 'âœ… ¡Perfecto para Crecimiento Rápido!';
-                if (ratio <= 200) return 'ðŸ’¡ Mantenimiento (Sube prote si quieres anabolismo)';
+                if (ratio <= 150) return '✅ ¡Perfecto para Crecimiento Rápido!';
+                if (ratio <= 200) return '💡 Mantenimiento (Sube prote si quieres anabolismo)';
                 return '⚠️ ¡Faltan Proteínas urgentemente! (Riesgo Nutricional)';
             } else {
-                if (ratio < 100) return 'âœ… Fórmula apta para Estrés Severo (UCI)';
-                if (ratio <= 130) return 'âœ… Fórmula apta para Estrés Moderado';
-                if (ratio <= 180) return 'âœ… Mantenimiento (Normal)';
+                if (ratio < 100) return '✅ Fórmula apta para Estrés Severo (UCI)';
+                if (ratio <= 130) return '✅ Fórmula apta para Estrés Moderado';
+                if (ratio <= 180) return '✅ Mantenimiento (Normal)';
                 return '⚠️ ¡Falta Proteína! (Exceso de Energía / Lipogénesis)';
             }
         };
@@ -5043,9 +5523,9 @@ function initInfusionLogic() {
             const fallbackName = rthObj ? rthObj.name : "Fórmula (" + bottleVol + "ml)";
             logBox.style.display = 'block';
             logBox.innerHTML = `
-                <div style="font-size:0.8rem; margin-bottom:4px; color:#555;">ðŸ“Š Pauta 24hrs: <b>${calcTotalVol} ml</b> ${cycleStr}</div>
+                <div style="font-size:0.8rem; margin-bottom:4px; color:#555;">📊 Pauta 24hrs: <b>${calcTotalVol} ml</b> ${cycleStr}</div>
                 <div style="border-top:1px dashed #f1c40f; margin:5px 0;"></div>
-                ðŸ“¦ Necesitas <b>${envasesNedded} producto(s) RTH diarios</b> de ${fallbackName}.<br>
+                📦 Necesitas <b>${envasesNedded} producto(s) RTH diarios</b> de ${fallbackName}.<br>
                 ${planesText}
                 ${currentSachetWarningStr}
                 ${rate > limit ? `<div style="margin-top:6px; color:#e74c3c; font-weight:700; background:rgba(231,76,60,0.1); padding:5px; border-radius:4px; border:1px solid rgba(231,76,60,0.3);">⚠️ Alerta Velocidad: Estás superando el límite clínico sugerido (${limit} ml/hr) para esta población.</div>` : ''}
@@ -5483,7 +5963,7 @@ function attachSearch(inputId, selectId) {
             formulas.forEach(f => {
                 const opt = document.createElement('option');
                 opt.value = f.id;
-                const star = AppState.favorites.includes(f.id) ? 'â­ ' : '';
+                const star = AppState.favorites.includes(f.id) ? '⭐ ' : '';
                 opt.innerText = star + f.name;
                 grp.appendChild(opt);
             });
@@ -5552,7 +6032,7 @@ function initChartSim() {
     if (!ctx) return;
 
     if (typeof Chart === 'undefined') {
-        console.warn("ðŸ“Š Chart.js not loaded yet or blocked. Skipping chart init.");
+        console.warn("📊 Chart.js not loaded yet or blocked. Skipping chart init.");
         return;
     }
     AppState.chart = new Chart(ctx, {
@@ -5957,17 +6437,17 @@ function initAssessmentLogic() {
         } else if (adequacy < 85) {
             label = 'Progresión';
             color = '#3498db';
-            icon = 'ðŸ“ˆ';
+            icon = '📈';
             bgColor = 'rgba(52, 152, 219, 0.05)';
         } else if (adequacy <= 115) {
             label = 'Meta Alcanzada';
             color = '#27ae60';
-            icon = 'âœ…';
+            icon = '✅';
             bgColor = 'rgba(39, 174, 96, 0.05)';
         } else {
             label = 'Sobrealimentación / Superávit';
             color = '#e74c3c';
-            icon = 'ðŸ”¥';
+            icon = '🔥';
             bgColor = 'rgba(231, 76, 60, 0.05)';
         }
 
@@ -6514,11 +6994,17 @@ function initGlobalEvents() {
         const fId = document.getElementById('formulaSelect')?.value;
         const formula = AppState.formulas ? AppState.formulas.find(f => f.id === fId) : null;
         const vol = window.getEffectiveSimulationVolume ? window.getEffectiveSimulationVolume() : 0;
-        const goal = parseFloat(document.getElementById('goalTotal')?.value) || 0;
-
-        let pTotal = parseFloat(document.getElementById('goalProt')?.dataset.val) || 0;
-        let cTotal = parseFloat(document.getElementById('goalCHO')?.dataset.val) || 0;
-        let lTotal = parseFloat(document.getElementById('goalLip')?.dataset.val) || 0;
+        const reqsVI = window.getEffectiveMacroRequirements ? window.getEffectiveMacroRequirements() : {
+            goal: parseFloat(document.getElementById('goalTotal')?.value) || 0,
+            pTotal: parseFloat(document.getElementById('goalProt')?.dataset.val) || 0,
+            cTotal: parseFloat(document.getElementById('goalCHO')?.dataset.val) || 0,
+            lTotal: parseFloat(document.getElementById('goalLip')?.dataset.val) || 0,
+            factorKcalVal: 0, factorProtVal: 0
+        };
+        const goal = reqsVI.goal;
+        let pTotal = reqsVI.pTotal;
+        let cTotal = reqsVI.cTotal;
+        let lTotal = reqsVI.lTotal;
 
         let modulesText = "";
         const mods = ["Nessucar", "MCT", "Enterex", "Banatrol", "Proteinex", "Fresubin"];
@@ -6534,7 +7020,15 @@ function initGlobalEvents() {
         const pesoFisico = p.peso || 0;
         const pesoCalc = document.getElementById('pesoCalculoSelect')?.value === 'real' ? pesoFisico : (p.peso_calculo || pesoFisico);
 
-        const cm = (document.getElementById('tallaCM')?.value || (p.estatura * 100)) || 0;
+        let estaturaM = p.estatura || 0;
+        if (!estaturaM) {
+            const rawEst = document.getElementById('estatura')?.value;
+            if (rawEst) {
+                const parsed = parseFloat(rawEst.replace(',', '.'));
+                if (parsed > 0) estaturaM = parsed > 3 ? parsed / 100 : parsed;
+            }
+        }
+        const cm = estaturaM > 0 ? (estaturaM * 100).toFixed(1) : (parseFloat(document.getElementById('tallaCM')?.value) || (p.estatura ? (p.estatura * 100).toFixed(1) : 0));
         const sctVal = document.getElementById('valSCT')?.innerText || '-- m²';
 
         const isBotellin = formula && formula.isBotellin;
@@ -6565,8 +7059,8 @@ function initGlobalEvents() {
         
         const dxMedico = document.getElementById('diagnostico')?.value || p.diagnostico || 'Sin diagnóstico médico';
         
-        const imcNum = p.bmi || (pesoFisico > 0 && p.estatura > 0 ? (pesoFisico / (p.estatura * p.estatura)) : 0);
-        const imcValText = imcNum > 0 ? `${imcNum.toFixed(1)}` : '--';
+        const imcNum = p.bmi || (pesoFisico > 0 && (typeof estaturaM !== 'undefined' ? estaturaM : p.estatura) > 0 ? (pesoFisico / Math.pow(typeof estaturaM !== 'undefined' ? estaturaM : p.estatura, 2)) : 0);
+        const imcValText = imcNum > 0 ? `${imcNum.toFixed(1)}` : (document.getElementById('valAdultIMC')?.innerText?.replace(' kg/m²', '') || document.getElementById('valBMI')?.innerText || '--');
         const tallaVal = cm > 0 ? `${cm} cm` : '--';
         const pesoVal = pesoFisico > 0 ? `${pesoFisico} kg` : '--';
         const cbVal = document.getElementById('cbraquial')?.value || '--';
@@ -6592,26 +7086,8 @@ function initGlobalEvents() {
             aporteStr += ` (${(parseFloat(protFinal) / pesoCalc).toFixed(2)} g/kg)`;
         }
 
-        let regimenParts = [];
-        const dietSelect = document.getElementById('oralDietType');
-        if (dietSelect && dietSelect.value !== 'custom') {
-            const rawOpt = dietSelect.options[dietSelect.selectedIndex].text;
-            const cleanOpt = rawOpt.replace(/\s*\(\d+\s*kcal\)/i, '');
-            regimenParts.push(`Régimen: ${cleanOpt}`);
-        }
-        if (formula) {
-            let fStr = `Fórmula: ${formula.name} (${volText}`;
-            const dilVal = document.getElementById('dilution')?.value;
-            if (dilVal && parseFloat(dilVal) > 0) fStr += `, Dilución: ${dilVal}%`;
-            fStr += `)`;
-            regimenParts.push(fStr);
-        }
-        if (modulesText) {
-            regimenParts.push(`Módulos: ${modulesText.slice(0, -2)}`);
-        }
-
-        const regimenAdded = regimenParts.length > 0 ? regimenParts.join(' | ') : 'Régimen: Según indicación clínica';
-        const dietoterapia = `${regimenAdded} | ${aporteStr}\nSe realizará control de exámenes, ingesta, deposiciones, y suplementación en caso de no cubrir requerimientos nutricionales.`;
+        const dietoterapiaFinalBase = window.generateDietoterapiaString ? window.generateDietoterapiaString(kcalFinal, protFinal, pesoCalc) : aporteStr;
+        const dietoterapia = `${dietoterapiaFinalBase}\nSe realizará control de exámenes, ingesta, deposiciones, y suplementación en caso de no cubrir requerimientos nutricionales.`;
 
         const userName = AppState.user?.user_metadata?.full_name || "[Nombre del Profesional]";
 
@@ -6672,8 +7148,73 @@ function initGlobalEvents() {
 
         const cargoFirmaVI = window.getVGOServiceSignature ? window.getVGOServiceSignature() : "Nutricionista clínica";
 
+        const currentServiceVal = (
+            document.getElementById('vgoServiceSelect')?.value || 
+            localStorage.getItem('selectedVGOService') || 
+            AppState.currentService || 
+            p.servicio || 
+            ''
+        ).toLowerCase();
+
+        const isNeonateService = (
+            patientType === 'neonate' || 
+            mode === 'neonate' || 
+            p.type === 'neonate' || 
+            document.getElementById('ptNeonate')?.checked ||
+            currentServiceVal.includes('neonat')
+        );
+
         let viText = "";
-        if (patientType === 'adult') {
+        if (isNeonateService) {
+            let fNacStr = "";
+            const fnVal = document.getElementById('fechaNacimiento')?.value || p.fechaNacimiento;
+            if (fnVal) {
+                const parts = fnVal.split('-');
+                if (parts.length === 3) {
+                    fNacStr = `${parts[2]}/${parts[1]}/${parts[0]}`;
+                }
+            }
+
+            const pesoNeoStr = p.peso_nacimiento || p.pn || (pesoFisico > 0 ? (pesoFisico < 10 ? `${Math.round(pesoFisico * 1000)} gr` : `${pesoFisico} gr`) : '');
+            const longNeoStr = cm > 0 ? `${cm} cm` : (p.estatura ? `${Math.round(p.estatura * 100)} cm` : '');
+            const pcNeoVal = parseFloat(document.getElementById('pcefalico')?.value) || p.pcefalico || 0;
+            const pcNeoStr = pcNeoVal > 0 ? `${pcNeoVal} cm` : '';
+            const dxMedStr = dxMedico && dxMedico !== 'Sin diagnóstico médico' ? dxMedico : '';
+            const nutriSign = (userName && userName !== '[Nombre del Profesional]') ? userName : 'Barbara Veliz Ramirez';
+
+            // Estructura personalizada adicional si existe
+            const selService = document.getElementById('vgoServiceSelect')?.value || 'neonatologia';
+            let customStructureVI = "";
+            const savedKey = `vgoCustomStructure_${selService}`;
+            const savedDataStr = localStorage.getItem(savedKey);
+            if (savedDataStr) {
+                try {
+                    const savedData = JSON.parse(savedDataStr);
+                    if (savedData.body && savedData.body.trim()) {
+                        const headerTitle = savedData.title && savedData.title.trim() ? savedData.title.trim() : 'Campos Adicionales del Servicio';
+                        customStructureVI = `\n${headerTitle}:\n${savedData.body.trim()}\n`;
+                    }
+                } catch (e) {}
+            }
+
+            viText = `INGRESO NUTRICIONAL
+
+Nombre: ${pName}    Fecha de nacimiento: ${fNacStr}
+
+Diagnóstico médico de ingreso:
+${dxMedStr}
+
+Datos Antropométricos: (De nacimiento, obtenidos de informe del RN)
+Peso: ${pesoNeoStr}          
+Longitud: ${longNeoStr}
+P. Cefálico: ${pcNeoStr}
+
+Observaciones:
+${customStructureVI}
+
+${nutriSign}  - Nutricionista UPC Neonatal`;
+
+        } else if (patientType === 'adult') {
             const isElderly = pAgeVal >= 65;
             let clasifIMC = "Normopeso";
             if (isElderly) {
@@ -6710,14 +7251,7 @@ function initGlobalEvents() {
             const distSign = getToggleVal('sintomaDistension') === 'sí' ? '+' : '-';
             const gSign = getToggleVal('sintomaGases') === 'sí' ? '+' : '-';
 
-            const regimenVal = document.getElementById('regimenSelect')?.value || 'N/A';
-            const viaVal = document.getElementById('viaSelect')?.value || 'N/A';
-            let dietoterapiaFinal = `Régimen ${regimenVal}`;
-            if (viaVal === 'oral') {
-                dietoterapiaFinal += ` distribuido en 4 servicios principales`;
-            } else {
-                dietoterapiaFinal += ` por ${viaVal === 'enteral' ? 'SNG/SNE' : 'Vía Central'} | ${dietoterapia}`;
-            }
+            const dietoterapiaFinal = dietoterapiaFinalBase;
 
             viText = `INGRESO NUTRICIONAL 
 
@@ -6781,6 +7315,25 @@ Hospital Regional de Antofagasta`;
         if (titleH4) titleH4.innerText = "Vista Previa de Valoración de Ingreso (VI)";
         container.style.display = 'block';
         container.scrollIntoView({ behavior: 'smooth' });
+
+        // Auto-mark patient as having VI completed
+        if (AppState.patient) {
+            AppState.patient.metadata = AppState.patient.metadata || {};
+            AppState.patient.metadata.has_vi = true;
+            AppState.patient.metadata.fecha_vi = new Date().toISOString();
+            AppState.patient.metadata.fecha_evaluacion = new Date().toISOString();
+            AppState.patient.evaluado = true;
+            if (typeof window.savePatientToLocalStorage === 'function') {
+                window.savePatientToLocalStorage(AppState.patient);
+            }
+            if (typeof supabaseClient !== 'undefined' && supabaseClient && AppState.patient.id && !String(AppState.patient.id).startsWith('pat_')) {
+                supabaseClient.from('pacientes').update({
+                    evaluado: true,
+                    metadata: AppState.patient.metadata,
+                    updated_at: new Date()
+                }).eq('id', AppState.patient.id).then(() => {});
+            }
+        }
     };
 
     const btnNote = document.getElementById('btnGenerateNote');
@@ -6807,25 +7360,72 @@ Hospital Regional de Antofagasta`;
 
         const pesoFisico = p.peso || 0;
         const pesoCalc = document.getElementById('pesoCalculoSelect')?.value === 'real' ? pesoFisico : (p.peso_calculo || pesoFisico);
-        const cm = (document.getElementById('tallaCM')?.value || (p.estatura * 100)) || 0;
-        const tallaMt = (cm / 100).toFixed(3);
+        let estM = p.estatura || 0;
+        if (!estM) {
+            const rawEst = document.getElementById('estatura')?.value;
+            if (rawEst) {
+                const parsed = parseFloat(rawEst.replace(',', '.'));
+                if (parsed > 0) estM = parsed > 3 ? parsed / 100 : parsed;
+            }
+        }
+        const cm = estM > 0 ? (estM * 100).toFixed(1) : (parseFloat(document.getElementById('tallaCM')?.value) || (p.estatura ? (p.estatura * 100).toFixed(1) : 0));
+        const tallaMt = estM > 0 ? estM.toFixed(2) : (cm > 0 ? (parseFloat(cm) / 100).toFixed(2) : '--');
         const cCintura = document.getElementById('ccintura')?.value || '--';
         const cBraquialVal = document.getElementById('cbraquial')?.value || '[Completar]';
 
-        const imcVal = document.getElementById('valIMC')?.innerText || '--';
-        const zImcVal = document.getElementById('valZBMI')?.innerText || '--';
-        const zTallaVal = document.getElementById('valZHFA')?.innerText || '--';
+        let calculatedBmi = p.bmi || 0;
+        if (!calculatedBmi && pesoFisico > 0 && estM > 0) {
+            calculatedBmi = pesoFisico / (estM * estM);
+        }
+        const domBmi = document.getElementById('valAdultIMC')?.innerText?.replace(' kg/m²', '') || document.getElementById('valBMI')?.innerText || document.getElementById('valIMC')?.innerText;
+        const imcVal = calculatedBmi > 0 ? calculatedBmi.toFixed(1) : (domBmi && domBmi !== '--' ? domBmi : '--');
+
+        let zImcDisplay = '--';
+        let zTallaDisplay = '--';
+        if (p.type === 'pediatric' || p.type === 'neonate') {
+            const m = p.exactMonths || 0;
+            const currentCm = parseFloat(cm) || (estM * 100);
+            if (p.zScores?.bmi !== undefined && !isNaN(p.zScores.bmi)) {
+                zImcDisplay = `${p.zScores.bmi > 0 ? '+' : ''}${p.zScores.bmi.toFixed(2)}`;
+            } else if (typeof getZScore === 'function' && m > 0) {
+                const z = m > 60 ? getZScore('bmi', m, p.sexo, calculatedBmi) : getZScore('wfh', currentCm, p.sexo, pesoFisico);
+                if (z !== null && !isNaN(z)) zImcDisplay = `${z > 0 ? '+' : ''}${z.toFixed(2)}`;
+            }
+            if (p.zScores?.hfa !== undefined && !isNaN(p.zScores.hfa)) {
+                zTallaDisplay = `${p.zScores.hfa > 0 ? '+' : ''}${p.zScores.hfa.toFixed(2)}`;
+            } else if (typeof getZScore === 'function' && m > 0 && currentCm > 0) {
+                const z = getZScore('hfa', m, p.sexo, currentCm);
+                if (z !== null && !isNaN(z)) zTallaDisplay = `${z > 0 ? '+' : ''}${z.toFixed(2)}`;
+            }
+        }
+        const zImcVal = (document.getElementById('valZBMI')?.innerText && document.getElementById('valZBMI')?.innerText !== '--') ? document.getElementById('valZBMI').innerText : zImcDisplay;
+        const zTallaVal = (document.getElementById('valZHFA')?.innerText && document.getElementById('valZHFA')?.innerText !== '--') ? document.getElementById('valZHFA').innerText : zTallaDisplay;
+
+
+
+
+
+
+
 
         const des = document.getElementById('diagnosticoPES')?.value || "Sin diagnóstico ingresado";
 
-        const goal = parseFloat(document.getElementById('goalTotal')?.value) || 0;
-        const pTotal = parseFloat(document.getElementById('goalProt')?.dataset.val) || 0;
-        const cTotal = parseFloat(document.getElementById('goalCHO')?.dataset.val) || 0;
-        const lTotal = parseFloat(document.getElementById('goalLip')?.dataset.val) || 0;
+        const reqs = window.getEffectiveMacroRequirements ? window.getEffectiveMacroRequirements() : {
+            goal: parseFloat(document.getElementById('goalTotal')?.value) || 0,
+            pTotal: parseFloat(document.getElementById('goalProt')?.dataset.val) || 0,
+            cTotal: parseFloat(document.getElementById('goalCHO')?.dataset.val) || 0,
+            lTotal: parseFloat(document.getElementById('goalLip')?.dataset.val) || 0,
+            pPct: 0, cPct: 0, lPct: 0,
+            factorKcalVal: 0, factorProtVal: 0
+        };
 
-        const pPct = goal > 0 ? ((pTotal * 4) / goal * 100).toFixed(0) : 0;
-        const cPct = goal > 0 ? ((cTotal * 4) / goal * 100).toFixed(0) : 0;
-        const lPct = goal > 0 ? ((lTotal * 9) / goal * 100).toFixed(0) : 0;
+        const goal = reqs.goal;
+        const pTotal = reqs.pTotal;
+        const cTotal = reqs.cTotal;
+        const lTotal = reqs.lTotal;
+        const pPct = reqs.pPct;
+        const cPct = reqs.cPct;
+        const lPct = reqs.lPct;
 
         const userName = AppState.user?.user_metadata?.full_name || "[Nombre del Profesional]";
 
@@ -6899,25 +7499,7 @@ Hospital Regional de Antofagasta`;
             aporteStr += ` (${(parseFloat(protFinal) / pesoAportes).toFixed(2)} g/kg)`;
         }
 
-        let regimenParts = [];
-        const dietSelect = document.getElementById('oralDietType');
-        if (dietSelect && dietSelect.value !== 'custom') {
-            const rawOpt = dietSelect.options[dietSelect.selectedIndex].text;
-            const cleanOpt = rawOpt.replace(/\s*\(\d+\s*kcal\)/i, '');
-            regimenParts.push(`Régimen: ${cleanOpt}`);
-        }
-        if (formula) {
-            let fStr = `Fórmula: ${formula.name} (${volText}`;
-            const dilVal = document.getElementById('dilution')?.value;
-            if (dilVal && parseFloat(dilVal) > 0) fStr += `, Dilución: ${dilVal}%`;
-            fStr += `)`;
-            regimenParts.push(fStr);
-        }
-        if (modulesText) {
-            regimenParts.push(`Módulos: ${modulesText.slice(0, -2)}`);
-        }
-
-        const dietoterapiaStr = regimenParts.length > 0 ? `${regimenParts.join(' | ')} | ${aporteStr}` : 'Según indicación clínica';
+        const dietoterapiaStr = window.generateDietoterapiaString ? window.generateDietoterapiaString(kcalFinal, protFinal, pesoAportes) : (regimenParts.length > 0 ? `${regimenParts.join(' | ')} | ${aporteStr}` : 'Según indicación clínica');
 
         // Obtener cargo de firma dinámicamente según el servicio seleccionado
         const cargoFirma = window.getVGOServiceSignature ? window.getVGOServiceSignature() : "Nutricionista clínica";
@@ -6943,10 +7525,12 @@ Hospital Regional de Antofagasta`;
 
         let indicadoresText = "";
         let tamizajeText = "";
+        let clasifIMC = "Normal / Eutrófico";
+        let imcNum = parseFloat(imcVal) || (typeof calculatedBmi !== 'undefined' ? calculatedBmi : 0) || (pesoFisico > 0 && cm > 0 ? (pesoFisico / Math.pow(parseFloat(cm) / 100, 2)) : 0);
 
         if (pMode === 'pediatric') {
-            const zImcVal = document.getElementById('valZBMI')?.innerText || '--';
-            const zTallaVal = document.getElementById('valZHFA')?.innerText || '--';
+
+
             const waistStatus = document.getElementById('valWaistClass')?.innerText || 'No evaluada';
 
             indicadoresText = `Indicadores nutricionales: (OMS / WHO Anthro Pediátrico)
@@ -6978,9 +7562,8 @@ o Interpretación: Evaluación según Edad Gestacional y Curvas de Crecimiento I
         } else {
             // Adult or Adulto Mayor
             const isElderly = ageValYears >= 65;
-            const imcNum = parseFloat(imcVal) || (pesoFisico > 0 && cm > 0 ? (pesoFisico / Math.pow(cm / 100, 2)) : 0);
             
-            let clasifIMC = "Normal / Eutrófico";
+            clasifIMC = "Normal / Eutrófico";
             if (isElderly) {
                 // MINSAL Adulto Mayor Criteria (<23 Enflaquecido, 23-27.9 Normal, 28-31.9 Sobrepeso, >=32 Obeso)
                 if (imcNum > 0) {
@@ -7013,35 +7596,45 @@ o Puntaje: ${nrs.score || 0} pts
 o Interpretación: ${(nrs.classification || 'Sin riesgo nutricional').toUpperCase()}`;
         }
 
+        const isEstimated = (document.getElementById('altrodilla')?.value || document.getElementById('mediaenv')?.value || document.getElementById('pesoCalculoSelect')?.value !== 'real');
+        const dataAntropoStr = isEstimated ? '(estimado)' : '(Bipedestado)';
+        
+        // Risk of LPP
+        const riesgoLpp = document.getElementById('riesgo_lpp')?.value || 'Sin evaluar';
+        
+        // Biochem parameters
+        const evoExamenes = document.getElementById('evoExamenes')?.value || 'Sin reportar';
+
+        // Diagnostic
+        let diagNutri = `Paciente ${pMode === 'pediatric' ? 'pediátrico' : (pMode === 'neonate' ? 'neonato' : 'adulto')} ${sexStr.toLowerCase()} con estado nutricional ${clasifIMC.toLowerCase()} según IMC.`;
+        const compBraquialText = p.amaStatus || p.cbStatus ? ` Con compartimiento braquial ${p.amaStatus || p.cbStatus}.` : '';
+        if (compBraquialText) diagNutri += compBraquialText;
+        if (des && des !== 'Sin diagnóstico ingresado') {
+            diagNutri = des;
+        }
+
+        // Factors calculation for Requirements
+        const factorKcalVal = reqs.factorKcalVal || (pesoCalc > 0 && goal > 0 ? (goal / pesoCalc).toFixed(0) : 0);
+        const factorProtVal = reqs.factorProtVal || (pesoCalc > 0 && pTotal > 0 ? (pTotal / pesoCalc).toFixed(1) : 0);
+
+        // Aporte
+        const curKcal = document.getElementById('valKcal')?.innerText || '0';
+        const curProt = document.getElementById('valProt')?.innerText || '0';
+        const curCho = document.getElementById('valCHO')?.innerText || '0';
+        const curLip = document.getElementById('valLip')?.innerText || '0';
+
+        // Format selection
+        const selFormatEl = document.getElementById('vgoFormatSelect');
+        let selectedFormat = selFormatEl?.value || localStorage.getItem('selectedVGOFormat');
+        if (!selectedFormat || selectedFormat === 'pediatric_neo') {
+            selectedFormat = pMode === 'neonate' ? 'neonate' : (pMode === 'pediatric' ? 'pediatric' : 'adult_std');
+            if (selFormatEl) selFormatEl.value = selectedFormat;
+        }
+
         let vgoText = "";
-        if (pMode === 'adult') {
-            const isEstimated = (document.getElementById('altrodilla')?.value || document.getElementById('mediaenv')?.value || document.getElementById('pesoCalculoSelect')?.value !== 'real');
-            const dataAntropoStr = isEstimated ? '(estimado)' : '(Bipedestado)';
-            
-            // Risk of LPP
-            const riesgoLpp = document.getElementById('riesgo_lpp')?.value || 'Sin evaluar';
-            
-            // Biochem parameters
-            const evoExamenes = document.getElementById('evoExamenes')?.value || 'Sin reportar';
 
-            // Diagnostic
-            let diagNutri = `Paciente adulto ${sexStr.toLowerCase()} con estado nutricional ${clasifIMC.toLowerCase()} según IMC.`;
-            const compBraquialText = p.amaStatus || p.cbStatus ? ` Con compartimiento braquial ${p.amaStatus || p.cbStatus}.` : '';
-            if (compBraquialText) diagNutri += compBraquialText;
-            if (des && des !== 'Sin diagnóstico ingresado') {
-                diagNutri = des;
-            }
-
-            // Factors calculation for Requirements
-            const factorKcalVal = parseFloat(document.getElementById('factorKcal')?.value) || (pesoCalc > 0 ? (goal / pesoCalc).toFixed(0) : 0);
-            const factorProtVal = parseFloat(document.getElementById('goalProtKg')?.value) || (pesoCalc > 0 ? (pTotal / pesoCalc).toFixed(1) : 0);
-
-            // Aporte
-            const curKcal = document.getElementById('valKcal')?.innerText || '0';
-            const curProt = document.getElementById('valProt')?.innerText || '0';
-            const curCho = document.getElementById('valCHO')?.innerText || '0';
-            const curLip = document.getElementById('valLip')?.innerText || '0';
-
+        if (selectedFormat === 'adult_std') {
+            // 1. VGO Adulto Estándar HRA (Hospitalario compacto)
             vgoText = `Valoracion global objetiva
 ANTROPOMETRÍA
 Datos Antropométricos:  ${dataAntropoStr}
@@ -7065,19 +7658,90 @@ Aporte: ${curKcal} kcals, ${curProt} gr prot, ${curCho} gr cho, ${curLip} gr lip
 
 DIETOTERAPIA: 
 ${dietoterapiaStr}
-
+${customStructureText}
 Observaciones/Plan:
-${customStructureText || `o Paciente tolerando nutrición
+o Paciente tolerando nutrición
 o Producto cubre requerimientos nutricionales calóricos proteicos
 o Seguimiento a deposiciones, tolerancia 
-o Seguimiento nutricional continuo`}
+o Seguimiento nutricional continuo
 
 _________________
 ${userName} 
 ${cargoFirma} 
 Unidad de Nutrición
 Hospital Regional de Antofagasta`;
-        } else {
+
+        } else if (selectedFormat === 'eval_nutri') {
+            // EVALUACIÓN POR NUTRICIONISTA (VALORACION GLOBAL OBJETIVA)
+            const alergiasNutri = alergiasVal === 'Sí' ? (anam.alergiasDetalle || 'Presenta alergias') : '-';
+            const deglucionNutri = deglucionVal === 'Sí' ? '(+) Presenta trastorno' : '(-)';
+            const viaAlim = formula ? 'Enteral' : 'oral';
+            const transitoNutri = (deposicionesVal === 'Sí' || deposicionesVal === 'Normal') ? '(+) Conservado' : (deposicionesVal === 'No' ? 'Sin deposiciones' : '(+)');
+            const tallaCmVal = cm > 0 ? cm : (tallaMt !== '--' ? Math.round(parseFloat(tallaMt) * 100) : '--');
+            const cBraqStr = cBraquialVal && cBraquialVal !== '[Completar]' ? `${cBraquialVal} cm` : 'No evaluado';
+
+            let tamizajeBlock = "";
+            if (pMode === 'pediatric' || pMode === 'neonate') {
+                tamizajeBlock = `Tamizaje Nutricional STRONGkids:
+-	Puntaje: ${sk.score || 0} puntos.
+-	Interpretación: ${(sk.classification || 'Riesgo bajo')}`;
+            } else {
+                tamizajeBlock = `Tamizaje Nutricional NRS 2002:
+-	Puntaje: ${nrs.score || 0} puntos.
+-	Interpretación: ${(nrs.classification || 'Sin riesgo nutricional')}`;
+            }
+
+            vgoText = `EVALUACIÓN POR NUTRICIONISTA
+(VALORACION GLOBAL OBJETIVA)
+
+Fecha de evaluación: ${dateStr}
+Edad: ${ageStr}
+
+Anamnesis alimentaria nutricional: 
+Alergias alimentaria: ${alergiasNutri}
+Selectividad alimentaria (-)
+Vía de alimentación: ${viaAlim}
+Trastorno de deglución: ${deglucionNutri}  
+Tránsito intestinal: ${transitoNutri} 
+
+${tamizajeBlock}
+
+Riesgo de LPP según Escala de Braden 
+·	${riesgoLpp}
+
+Datos antropométricos: 
+-	Peso: ${pesoFisico} Kg  
+-	Talla: ${tallaCmVal} cm.
+C. Braquial: ${cBraqStr}
+
+Exámenes de relevancia nutricional:
+${evoExamenes}
+
+Diagnóstico nutricional integrado:
+${diagNutri}
+
+Requerimientos nutricionales 
+-	Calorías: ${Math.round(goal)} kcal 🡪 (${factorKcalVal} kcal x kg de peso) 
+-	Proteínas: ${pTotal.toFixed(1)} g 🡪 ${pPct}% VCT
+-	CHO: ${cTotal.toFixed(1)} g 🡪 ${cPct}% VCT
+-	Lípidos: ${lTotal.toFixed(1)} g 🡪 ${lPct}% VCT
+
+Prescripción dietética: 
+${dietoterapiaStr}
+${customStructureText}
+Plan/observaciones:
+Paciente con buena tolerancia e ingesta.
+Se está cubriendo requerimientos al 100%. 
+Seguimiento nutricional diario.  
+
+_________________
+${userName}
+${cargoFirma}
+Unidad de Alimentación y Nutrición
+SEDILE-CEFE`;
+
+        } else if (selectedFormat === 'detailed_anam') {
+            // 2. VGO Detallada (Anamnesis completa + %VCT + PES)
             vgoText = `VALORACION GLOBAL OBJETIVA POR NUTRICIONISTA
 
 o Fecha de evaluación: ${dateStr}
@@ -7091,9 +7755,10 @@ Diagnóstico:
 o 1. ${dxMedico}
 o Antecedentes Mórbidos: ${antecedentesMorbidos}
 
-Antropometría: (Evaluación en bipedestación por nutricionista del servicio)
+Antropometría: (Evaluación ${dataAntropoStr.toLowerCase()} por nutricionista del servicio)
 o Peso actual: ${pesoFisico} kg
 o Talla: ${tallaMt} mt
+o IMC: ${imcNum > 0 ? imcNum.toFixed(1) : imcVal} kg/m² (${clasifIMC})
 o C. braquial: ${cBraquialVal} cm
 o C. cintura: ${cCintura} cm
 
@@ -7104,26 +7769,230 @@ o Síntomas gastrointestinales: Nauseas (${nauseasVal}) Vómitos (${vomitosVal})
 o Anamnesis alimentaria: Dentadura (${dentaduraVal}) Alergias/intolerancias alimentarias (${alergiasVal}) Trastorno de deglución (${deglucionVal}) Apetito (${apetitoVal}).
 
 ${tamizajeText}
+o Valoración riesgo LPP: ${riesgoLpp.toUpperCase()}
+
+Exámenes de relevancia:
+${evoExamenes}
 
 Diagnóstico Nutricional Integrado:
-o ${des}
+o ${diagNutri}
 
 Requerimientos nutricionales:
-o Calorías: ${Math.round(goal)} kcal
-o Proteínas: ${pTotal.toFixed(1)} gr -> VCT ${pPct} %
+o Calorías: ${Math.round(goal)} kcal (${factorKcalVal} kcal/kg)
+o Proteínas: ${pTotal.toFixed(1)} gr -> VCT ${pPct} % (${factorProtVal} g/kg)
 o Carbohidratos: ${cTotal.toFixed(1)} gr -> VCT ${cPct} %
 o Lípidos: ${lTotal.toFixed(1)} gr -> VCT ${lPct} %
+
+Aporte actual: ${curKcal} kcal | P: ${curProt} g | CHO: ${curCho} g | LIP: ${curLip} g
 
 Dietoterapia actual:
 o ${dietoterapiaStr}
 ${customStructureText}
 Observaciones/Plan/Sugerencias:
-o [Completar]
+o Monitorización diaria de ingesta y tolerancia enteral/oral
+o Balance hídrico y vigilar tránsito intestinal
+o Ajuste según evolución clínica y metabólica
 
+_________________
 ${userName}
 ${cargoFirma}
-Unidad de nutrición y alimentación
+Unidad de Nutrición y Alimentación
 Hospital Regional de Antofagasta`;
+
+        } else if (selectedFormat === 'pediatric') {
+            // 4. VGO Pediátrica
+            vgoText = `VALORACIÓN GLOBAL OBJETIVA PEDIÁTRICA
+
+o Fecha de evaluación: ${dateStr}
+o Nombre/Ficha: ${p.nombre || 'Paciente'} | Ficha: ${numFicha}
+o Edad: ${ageStr} | Sexo: ${sexStr}
+o Diagnóstico Médico: ${dxMedico}
+
+ANTROPOMETRÍA Y CRECIMIENTO:
+o Peso actual: ${pesoFisico} kg | Talla: ${tallaMt} mt
+${indicadoresText}
+
+${tamizajeText}
+
+TOLERANCIA Y SÍNTOMAS:
+o Síntomas digestivos: Vómitos (${vomitosVal}), Regurgitaciones (${reflujoVal}), Deposiciones (${deposicionesVal}), Distensión (${distensionVal}).
+o Vía de alimentación: ${dietoterapiaStr}
+
+DIAGNÓSTICO NUTRICIONAL:
+o ${diagNutri}
+
+METAS Y APORTE NUTRICIONAL:
+o Requerimiento Calórico: ${Math.round(goal)} kcal (${factorKcalVal} kcal/kg/día)
+o Requerimiento Proteico: ${pTotal.toFixed(1)} g (${factorProtVal} g/kg/día)
+o Aporte entregado: ${curKcal} kcal | Prot: ${curProt} g | CHO: ${curCho} g | Lípidos: ${curLip} g
+${customStructureText}
+PLAN Y RECOMENDACIONES:
+o Mantener esquema de alimentación según indicación médica/nutricional.
+o Control diario de tolerancia digestiva y curva ponderal.
+o Registro estricto de volúmenes administrados en hoja de enfermería / SEDILE.
+
+_________________
+${userName}
+${cargoFirma}
+Nutrición Pediátrica
+Hospital Regional de Antofagasta`;
+
+        } else if (selectedFormat === 'neonate') {
+            // 5. EVALUACIÓN NUTRICIONAL (Neonatología)
+            const semNacer = parseInt(document.getElementById('egSemanas')?.value) || 0;
+            const diasNacer = parseInt(document.getElementById('egDias')?.value) || 0;
+
+            // FNC (Fecha de Nacimiento Corregida / 40 semanas)
+            let fncStr = "--";
+            let ecStr = "--";
+            let egcStr = "--";
+            if (fnVal) {
+                const [fy, fm, fd] = fnVal.split('-').map(Number);
+                const bDate = new Date(fy, fm - 1, fd);
+                const today = new Date();
+                const diffMs = today.getTime() - bDate.getTime();
+                const diffDays = Math.max(0, Math.floor(diffMs / (24 * 60 * 60 * 1000)));
+                ecStr = `${diffDays} días`;
+
+                if (semNacer > 0) {
+                    const termDays = ((40 - semNacer) * 7) - diasNacer;
+                    const fncDate = new Date(bDate.getTime() + (termDays * 24 * 60 * 60 * 1000));
+                    fncStr = fncDate.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+                    const totalDaysGestCorr = (semNacer * 7) + diasNacer + diffDays;
+                    const semGestCorr = Math.floor(totalDaysGestCorr / 7);
+                    const diasGestCorr = totalDaysGestCorr % 7;
+                    egcStr = `${semGestCorr} Sem${diasGestCorr > 0 ? ` + ${diasGestCorr} día${diasGestCorr !== 1 ? 's' : ''}` : ''}`;
+                }
+            }
+
+            // Anthropometrics
+            const wG = pesoFisico > 0 ? (pesoFisico < 10 ? Math.round(pesoFisico * 1000) : Math.round(pesoFisico)) : 0;
+            const pesoKgNeo = pesoFisico > 0 ? (pesoFisico < 10 ? pesoFisico : pesoFisico / 1000) : 0;
+            const tallaNeo = cm > 0 ? cm : (tallaMt !== '--' ? Math.round(parseFloat(tallaMt) * 100) : 0);
+            const pcNeo = parseFloat(document.getElementById('pcefalico')?.value) || 0;
+
+            const pnStr = p.pesoNacimiento || p.pn || (wG > 0 ? `${wG} gr` : '--');
+            const tnStr = p.tallaNacimiento || p.tn || (tallaNeo > 0 ? `${tallaNeo} cm` : '--');
+            const pcnStr = p.pcNacimiento || p.pcn || (pcNeo > 0 ? `${pcNeo} cm` : '--');
+
+            // Pittaluga indicators
+            let pittPesoStr = "< Percentil 3";
+            let pittTallaStr = "< Percentil 10";
+            let pittPcStr = "< Percentil 10";
+            if (semNacer >= 24 && semNacer <= 42 && window.PITTALUGA_DATA) {
+                const wRefs = window.PITTALUGA_DATA.peso ? window.PITTALUGA_DATA.peso[semNacer] : null;
+                if (wRefs && wG > 0) {
+                    if (wG < wRefs.p3) pittPesoStr = "< Percentil 3";
+                    else if (wG < wRefs.p10) pittPesoStr = "< Percentil 10";
+                    else if (wG <= wRefs.p90) pittPesoStr = "Percentil 10 - 90";
+                    else pittPesoStr = "> Percentil 90";
+                }
+                const tRefs = window.PITTALUGA_DATA.talla ? window.PITTALUGA_DATA.talla[semNacer] : null;
+                if (tRefs && tallaNeo > 0) {
+                    if (tallaNeo < tRefs.p10) pittTallaStr = "< Percentil 10";
+                    else if (tallaNeo <= tRefs.p90) pittTallaStr = "Percentil 10 - 90";
+                    else pittTallaStr = "> Percentil 90";
+                }
+                const pcRefs = window.PITTALUGA_DATA.pc ? window.PITTALUGA_DATA.pc[semNacer] : null;
+                if (pcRefs && pcNeo > 0) {
+                    if (pcNeo < pcRefs.p10) pittPcStr = "< Percentil 10";
+                    else if (pcNeo <= pcRefs.p90) pittPcStr = "Percentil 10 - 90";
+                    else pittPcStr = "> Percentil 90";
+                }
+            }
+
+            // Diagnóstico Nutricional
+            let diagNutriNeo = des && des !== 'Sin diagnóstico ingresado' ? des : '';
+            if (!diagNutriNeo) {
+                let premText = semNacer > 0 ? (semNacer < 28 ? `Prematuro extremo ${semNacer} SG` : (semNacer < 32 ? `Prematuro moderado ${semNacer} SG` : (semNacer < 37 ? `Prematuro tardío ${semNacer} SG` : 'Recién nacido de término'))) : 'Neonato';
+                let pesoText = wG > 0 ? (wG < 1000 ? 'con peso extremadamente bajo al nacer <1000 gr' : (wG < 1500 ? 'con muy bajo peso al nacer <1500 gr' : (wG < 2500 ? 'con bajo peso al nacer <2500 gr' : 'con peso adecuado'))) : '';
+                diagNutriNeo = `${premText}${pesoText ? `, ${pesoText}` : ''}. Hoy se encuentra con desnutrición según parámetro P/E y L/E.`;
+            }
+
+            // Micronutrientes (Calcio y Fósforo)
+            const caKg = 150;
+            const fKg = 100;
+            const caTot = pesoKgNeo > 0 ? Math.round(caKg * pesoKgNeo) : 120;
+            const fTot = pesoKgNeo > 0 ? Math.round(fKg * pesoKgNeo) : 87;
+
+            // Prescripción dietética
+            const volToma = parseFloat(document.getElementById('volumen')?.value) || 0;
+            const vecesToma = parseInt(document.getElementById('volumeTimes')?.value) || 8;
+            const hrsInterval = vecesToma > 0 ? Math.round(24 / vecesToma) : 3;
+            const totalVol = volToma > 0 ? (volToma * vecesToma) : (parseFloat(document.getElementById('volumeTotalDisplay')?.innerText) || 0);
+            const volKg = pesoKgNeo > 0 && totalVol > 0 ? Math.round(totalVol / pesoKgNeo) : 0;
+
+            let nomPrescrip = formula ? `${formula.name}${document.getElementById('dilution')?.value ? ` ${document.getElementById('dilution').value}%` : ''}` : 'LMF 4% exclusiva';
+            let prescripDietNeo = `${nomPrescrip}  ${volToma > 0 ? `${volToma} cc` : '17 cc'} cada ${hrsInterval} hrs por ${vecesToma} veces al día`;
+            let volTotalNeo = totalVol > 0 ? totalVol : 136;
+            let volTotalNeoKg = volKg > 0 ? volKg : 156;
+
+            const fnDisplay = semNacer > 0 ? `${fNacStr} (${semNacer} Sem${diasNacer > 0 ? ` + ${diasNacer} d` : ''})` : fNacStr;
+
+            vgoText = `EVALUACIÓN NUTRICIONAL
+
+Nombre: ${p.nombre || 'Sin nombre ingresado'}                               Ficha: ${numFicha}
+FN: ${fnDisplay}                                 FNC:  ${fncStr}  
+EC: ${ecStr}                     EGC: ${egcStr}                                                          
+                                                     
+Dg Médico: ${dxMedico}
+
+Anamnesis: ${anam.anamnesisGeneral || ''}
+
+Datos Antropométricos:
+Peso: ${wG > 0 ? `${wG} gr` : `${pesoFisico} kg`}                                PN: ${pnStr.includes('gr') ? pnStr : `${pnStr} gr`}
+Talla: ${tallaNeo > 0 ? `${tallaNeo} cm` : `${tallaMt} mt`}                                 TN: ${tnStr.includes('cm') ? tnStr : `${tnStr} cm`}
+Pc: ${pcNeo > 0 ? `${pcNeo} cm` : '--'}                                     PcN: ${pcnStr.includes('cm') ? pcnStr : `${pcnStr} cm`}
+ 
+Indicadores:
+Según curvas Alarcon-Pittaluga
+P/E:    ${pittPesoStr}
+L/E:    ${pittTallaStr}
+Pc/E:   ${pittPcStr}
+
+Diagnóstico Nutricional:
+${diagNutriNeo}
+
+Cálculo de Requerimientos: Según Fórmula Factorial
+Calorías:    ${Math.round(goal)} kcals      (${factorKcalVal} kcal/kg/día)              
+Proteínas:      ${pTotal.toFixed(1)} gr/día    (${factorProtVal} gr/kg/día)                   ${pPct}% VCT
+Cho:             ${cTotal.toFixed(1)} gr/día                                               ${cPct}% VCT
+Lípidos:          ${lTotal.toFixed(1)} gr/día                                               ${lPct}% VCT
+Calcio:        ${caTot} mg/día (${caKg} mg/kg/día)
+Fósforo:        ${fTot} mg/día (${fKg} mg/kg/día)
+
+Sugerencia Prescripción Dietética:  
+${prescripDietNeo}
+Volumen total: ${volTotalNeo} cc (${volTotalNeoKg} cc/kg/día)
+
+Observaciones:
+${customStructureText || ''}
+  - Nutricionista UPC Neonatal`;
+
+        } else {
+            // 4. Evolución Nutricional Rápida ('quick_evo')
+            vgoText = `EVOLUCIÓN NUTRICIONAL
+
+Fecha: ${dateStr} | Ficha: ${numFicha} | Paciente: ${p.nombre || 'Adulto'} (${sexStr}, ${ageStr})
+Diagnóstico Nutricional: ${diagNutri}
+
+ANTROPOMETRÍA:
+o Peso: ${pesoFisico} kg | Talla: ${tallaMt} mt | IMC: ${imcNum > 0 ? imcNum.toFixed(1) : imcVal} kg/m² (${clasifIMC})
+o Tamizaje Nutricional: ${nrs.score || 0} pts (${nrs.score >= 3 ? 'En Riesgo' : 'Sin Riesgo'})
+
+METAS Y RÉGIMEN ACTUAL:
+o Requerimientos: ${Math.round(goal)} kcal (${factorKcalVal} kcal/kg) | Prot: ${pTotal.toFixed(1)} g (${factorProtVal} g/kg)
+o Régimen/Fórmula: ${dietoterapiaStr}
+o Aporte: ${curKcal} kcal | P: ${curProt} g | CHO: ${curCho} g | L: ${curLip} g
+${customStructureText}
+PLAN:
+o Tolerando indicación nutricional actual.
+o Continuar según evolución clínica y monitoreo de ingesta.
+
+_________________
+${userName}
+${cargoFirma} - Unidad de Nutrición HRA`;
         }
 
         content.innerText = vgoText;
@@ -7134,10 +8003,50 @@ Hospital Regional de Antofagasta`;
         if (titleH4) titleH4.innerText = "Vista Previa de Evolución (VGO)";
         container.style.display = 'block';
         container.scrollIntoView({ behavior: 'smooth' });
+
+        // Auto-mark patient as having VGO completed (and reset 7-day timer)
+        if (AppState.patient) {
+            AppState.patient.metadata = AppState.patient.metadata || {};
+            AppState.patient.metadata.has_vgo = true;
+            AppState.patient.metadata.fecha_vgo = new Date().toISOString();
+            AppState.patient.metadata.fecha_evaluacion = new Date().toISOString();
+            AppState.patient.evaluado = true;
+            if (typeof window.savePatientToLocalStorage === 'function') {
+                window.savePatientToLocalStorage(AppState.patient);
+            }
+            if (typeof supabaseClient !== 'undefined' && supabaseClient && AppState.patient.id && !String(AppState.patient.id).startsWith('pat_')) {
+                supabaseClient.from('pacientes').update({
+                    evaluado: true,
+                    metadata: AppState.patient.metadata,
+                    updated_at: new Date()
+                }).eq('id', AppState.patient.id).then(() => {});
+            }
+        }
     };
 
     const btnVGO = document.getElementById('btnGenerateVGO');
     if (btnVGO) btnVGO.onclick = window.generateVGO;
+
+// --- VGO FORMAT PREFERENCE HANDLERS ---
+window.updateVGOFormatPreference = function () {
+    const sel = document.getElementById('vgoFormatSelect');
+    if (!sel) return;
+    localStorage.setItem('selectedVGOFormat', sel.value);
+};
+
+window.initVGOFormatPreference = function () {
+    const sel = document.getElementById('vgoFormatSelect');
+    if (!sel) return;
+    const saved = localStorage.getItem('selectedVGOFormat');
+    if (saved && sel.querySelector(`option[value="${saved}"]`)) {
+        sel.value = saved;
+    }
+};
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', window.initVGOFormatPreference);
+} else {
+    window.initVGOFormatPreference();
+}
 
 // --- VGO SERVICE & CUSTOM STRUCTURE HANDLERS ---
 window.updateVGOServiceConfig = function () {
@@ -7425,7 +8334,7 @@ function addExamRow() {
         <input type="date">
         <input type="text" placeholder="Examen (Ej: Albúmina)">
         <input type="text" placeholder="Resultado">
-        <button class="btn-row-del" onclick="this.parentElement.remove()" title="Eliminar examen">ðŸ—‘ï¸</button>
+        <button class="btn-row-del" onclick="this.parentElement.remove()" title="Eliminar examen">🗑️</button>
     `;
     container.appendChild(row);
 }
@@ -7543,7 +8452,8 @@ function constructNutriIAPrompt() {
             return { fecha: inputs[0]?.value, examen: inputs[1]?.value, valor: inputs[2]?.value };
         }).filter(e => e.examen),
         riesgo: {
-            nrs2002: document.getElementById('nrs2002')?.value,
+            nrs2002: AppState.patient?.nrs2002 ? `${AppState.patient.nrs2002.score || 0} pts (${AppState.patient.nrs2002.classification || ''})` : (document.getElementById('nrsTotalScore')?.innerText ? `${document.getElementById('nrsTotalScore').innerText} pts (${document.getElementById('nrsClassif')?.innerText || ''})` : document.getElementById('nrs2002')?.value || "No evaluado"),
+            strongkids: AppState.patient?.strongkids ? `${AppState.patient.strongkids.score || 0} pts (${AppState.patient.strongkids.classification || ''})` : "No evaluado",
             vgs: document.getElementById('vgs')?.value
         },
         tolerancia: {
@@ -7810,7 +8720,7 @@ function initGoalMacroChart() {
             if (input) {
                 input.value = value;
                 input.dispatchEvent(new Event('input'));
-                showToast(`ðŸŽ¯ Proteína fijada en ${value} g/kg`);
+                showToast(`🎯 Proteína fijada en ${value} g/kg`);
             }
         }
     };
@@ -8254,6 +9164,25 @@ window.calculateStrongKids = () => {
     if (!AppState.patient.strongkids) AppState.patient.strongkids = {};
     AppState.patient.strongkids.score = total;
     AppState.patient.strongkids.classification = classif;
+    const scrgText = `${total} pts`;
+    if (AppState.patient.id) {
+        try {
+            let localCache = JSON.parse(localStorage.getItem('local_ward_patients') || '[]');
+            const pIdx = localCache.findIndex(p => p.id === AppState.patient.id);
+            if (pIdx >= 0) {
+                localCache[pIdx].metadata = localCache[pIdx].metadata || {};
+                localCache[pIdx].metadata.nrs_score = scrgText;
+                localCache[pIdx].metadata.screening_score = scrgText;
+                localCache[pIdx].metadata.strongkids = AppState.patient.strongkids;
+                localStorage.setItem('local_ward_patients', JSON.stringify(localCache));
+            }
+        } catch(e) {}
+        const scrgCell = document.getElementById(`table_scrg_${AppState.patient.id}`);
+        if (scrgCell) {
+            const bgStyle = total >= 4 ? 'background:#fee2e2; color:#c0392b; font-weight:800; border-radius:4px; padding:2px 6px;' : (total >= 1 ? 'background:#fef3c7; color:#92400e; font-weight:700; border-radius:4px; padding:2px 6px;' : 'background:#dcfce7; color:#166534; font-weight:700; border-radius:4px; padding:2px 6px;');
+            scrgCell.innerHTML = `<span style="${bgStyle}">${scrgText}</span>`;
+        }
+    }
 };
 
 window.setNrsInitialState = (qId, value) => {
@@ -8345,6 +9274,23 @@ window.calculateNRS2002 = () => {
         AppState.patient.nrs2002.statusScore = 0;
         AppState.patient.nrs2002.severityScore = 0;
         AppState.patient.nrs2002.ageScore = 0;
+        if (AppState.patient.id) {
+            try {
+                let localCache = JSON.parse(localStorage.getItem('local_ward_patients') || '[]');
+                const pIdx = localCache.findIndex(p => p.id === AppState.patient.id);
+                if (pIdx >= 0) {
+                    localCache[pIdx].metadata = localCache[pIdx].metadata || {};
+                    localCache[pIdx].metadata.nrs_score = '0 pts';
+                    localCache[pIdx].metadata.screening_score = '0 pts';
+                    localCache[pIdx].metadata.nrs2002 = AppState.patient.nrs2002;
+                    localStorage.setItem('local_ward_patients', JSON.stringify(localCache));
+                }
+            } catch(e) {}
+            const scrgCell = document.getElementById(`table_scrg_${AppState.patient.id}`);
+            if (scrgCell) {
+                scrgCell.innerHTML = `<span style="background:#dcfce7; color:#166534; font-weight:700; border-radius:4px; padding:2px 6px;">0 pts</span>`;
+            }
+        }
     } else {
         // ESCENARIO B: Al menos un SÍ en Screening Inicial
         if (finalSection) finalSection.style.display = 'block';
@@ -8405,6 +9351,25 @@ window.calculateNRS2002 = () => {
         AppState.patient.nrs2002.statusScore = statusVal;
         AppState.patient.nrs2002.severityScore = severityVal;
         AppState.patient.nrs2002.ageScore = ageScore;
+        const scrgText = `${total} pts`;
+        if (AppState.patient.id) {
+            try {
+                let localCache = JSON.parse(localStorage.getItem('local_ward_patients') || '[]');
+                const pIdx = localCache.findIndex(p => p.id === AppState.patient.id);
+                if (pIdx >= 0) {
+                    localCache[pIdx].metadata = localCache[pIdx].metadata || {};
+                    localCache[pIdx].metadata.nrs_score = scrgText;
+                    localCache[pIdx].metadata.screening_score = scrgText;
+                    localCache[pIdx].metadata.nrs2002 = AppState.patient.nrs2002;
+                    localStorage.setItem('local_ward_patients', JSON.stringify(localCache));
+                }
+            } catch(e) {}
+            const scrgCell = document.getElementById(`table_scrg_${AppState.patient.id}`);
+            if (scrgCell) {
+                const bgStyle = total >= 3 ? 'background:#fee2e2; color:#c0392b; font-weight:800; border-radius:4px; padding:2px 6px;' : 'background:#dcfce7; color:#166534; font-weight:700; border-radius:4px; padding:2px 6px;';
+                scrgCell.innerHTML = `<span style="${bgStyle}">${scrgText}</span>`;
+            }
+        }
     }
 };
 
@@ -8880,6 +9845,40 @@ window.formatPatientNameFirst = function(nameStr) {
     return clean;
 };
 
+function isSamePatientOrMatch(pA, pB) {
+    if (!pA || !pB) return false;
+    const nameA = (pA.nombre || '').trim();
+    const nameB = (pB.nombre || '').trim();
+    if (!nameA || !nameB) return false;
+
+    // Direct case-insensitive match
+    if (nameA.toUpperCase() === nameB.toUpperCase()) return true;
+
+    // Check ficha if both present
+    const fA = (pA.num_ficha || pA.metadata?.num_ficha || '').toString().trim();
+    const fB = (pB.num_ficha || pB.metadata?.num_ficha || '').toString().trim();
+    if (fA && fB && fA.length >= 3 && fA === fB) return true;
+
+    // Name token comparison ignoring accents, punctuation and short words
+    const cleanTokens = (str) => {
+        return str.toLowerCase()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .split(/\s+/)
+            .filter(w => w.length > 2 && !['del', 'las', 'los', 'san', 'santa', 'edad'].includes(w));
+    };
+
+    const tokensA = cleanTokens(nameA);
+    const tokensB = cleanTokens(nameB);
+    if (tokensA.length === 0 || tokensB.length === 0) return false;
+
+    const common = tokensA.filter(t => tokensB.includes(t));
+    if (common.length >= 2) return true;
+    if (common.length >= 1 && (tokensA.length === 1 || tokensB.length === 1)) return true;
+
+    return false;
+}
+
 function parseDietoolsOCRText(ocrText, bedsList) {
     console.log("--- DIETOOLS PARSER INPUT ---", ocrText);
     const fixedText = fixDietoolsEncoding(ocrText);
@@ -8889,16 +9888,42 @@ function parseDietoolsOCRText(ocrText, bedsList) {
     let currentBedKey = null;
 
     rawLines.forEach(line => {
-        // 1. Check if line starts with a bed code and ficha: "501_01 - 759430 ..." or "501-1 - 759430 ..."
-        const bedFichaMatch = line.match(/^([A-Z0-9]+[_\-\s]\d{1,2})\s*-\s*(\d{4,8})/i);
+        // 1. Check if line starts with a bed code and optional ficha:
+        // Handles hyphens, colons, tabs, and spaces (e.g., "501_01 - 759430", "501-1\t759430", "Cupo 1 - 759430", "AR 1\t759430")
+        let rawBed = '';
+        let ficha = '';
+        let restOfLine = '';
 
-        if (bedFichaMatch) {
-            const rawBed = bedFichaMatch[1];
-            const ficha = bedFichaMatch[2];
+        const bedMatchGeneral = line.match(/^((?:CAMA\s+|BOX\s+|CUPO\s+|AR\s+|UCI\s+|TIM\s+|UCO\s+|ONCO\s+)?[A-Z0-9]+[_\-\s]?\d{0,2})\s*[\-\:\t]\s*(\d{4,9})(.*)$/i)
+            || line.match(/^([A-Z0-9]+[_\-\s]\d{1,2})\s+(\d{4,9})(.*)$/i);
+
+        if (bedMatchGeneral) {
+            rawBed = bedMatchGeneral[1].trim();
+            ficha = bedMatchGeneral[2].trim();
+            restOfLine = bedMatchGeneral[3] || '';
+        } else if (Array.isArray(bedsList)) {
+            // Check if line starts with any known bed name from bedsList
+            for (const b of bedsList) {
+                const escaped = b.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                const prefixM = line.match(new RegExp(`^(?:CAMA\\s+)?(${escaped})\\s*([\\-\\:\\t\\s])\\s*(.*)$`, 'i'));
+                if (prefixM) {
+                    rawBed = b;
+                    const remainder = prefixM[3].trim();
+                    const fM = remainder.match(/^(\d{4,9})\s*(.*)$/);
+                    if (fM) {
+                        ficha = fM[1];
+                        restOfLine = fM[2];
+                    } else {
+                        restOfLine = remainder;
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (rawBed) {
             const normBedKey = normalizeBedCode(rawBed);
             currentBedKey = normBedKey;
-
-            const restOfLine = line.substring(bedFichaMatch[0].length);
 
             // Extract Name and Edad
             let name = '';
@@ -8918,7 +9943,7 @@ function parseDietoolsOCRText(ocrText, bedsList) {
 
             // Clean name from status codes or trailing tabs
             name = name.replace(/\s*-\s*[NS]\s+[NS]$/i, '').replace(/[\t\r\n]/g, '').trim();
-            name = window.formatPatientNameFirst(name);
+            name = window.formatPatientNameFirst ? window.formatPatientNameFirst(name) : name;
 
             if (name.length <= 2) {
                 const wordsM = restOfLine.match(/([A-ZÑÁÉÍÓÚ]{3,}(?:\s+[A-ZÑÁÉÍÓÚ]{2,}){1,4})/i);
@@ -8976,7 +10001,17 @@ function parseDietoolsOCRText(ocrText, bedsList) {
     // Map results back to current ward's bedsList
     return bedsList.map(bedName => {
         const normTargetBed = normalizeBedCode(bedName);
-        const matchData = parsedPatientsMap[normTargetBed];
+        let matchData = parsedPatientsMap[normTargetBed];
+
+        if (!matchData) {
+            const targetDigits = bedName.replace(/[^0-9]/g, '');
+            for (const k in parsedPatientsMap) {
+                if (targetDigits.length > 0 && k.replace(/[^0-9]/g, '') === targetDigits) {
+                    matchData = parsedPatientsMap[k];
+                    break;
+                }
+            }
+        }
 
         if (matchData) {
             return {
@@ -9056,9 +10091,27 @@ async function showCensusReviewModal(extracted, bedsList, activeLoc) {
             activePatients = data.filter(p => p.estado_sala !== 'de_alta' && p.estado_sala !== 'eliminado');
         }
     }
+
+    // Merge local storage cache safely so we don't miss active local patients
+    try {
+        const localCache = JSON.parse(localStorage.getItem('local_ward_patients') || '[]');
+        localCache.forEach(lp => {
+            if (!lp || lp.estado_sala === 'de_alta' || lp.estado_sala === 'eliminado') return;
+            const idx = activePatients.findIndex(ap => (ap.id === lp.id) || (ap.cama && lp.cama && ap.cama.trim().toUpperCase() === lp.cama.trim().toUpperCase()));
+            if (idx >= 0) {
+                activePatients[idx] = { ...activePatients[idx], ...lp };
+            } else {
+                activePatients.push(lp);
+            }
+        });
+    } catch(e) {}
     
     const matchedPatients = activePatients.filter(p => {
         if (p.metadata && p.metadata.location && p.metadata.location.serviceId) {
+            const locFloor = p.metadata.location.floor;
+            if (locFloor && activeLoc.floor && String(locFloor) !== String(activeLoc.floor)) {
+                return false;
+            }
             return p.metadata.location.serviceId === activeLoc.serviceId;
         }
         return bedsList.includes(p.cama);
@@ -9071,46 +10124,68 @@ async function showCensusReviewModal(extracted, bedsList, activeLoc) {
     window.pendingCensusChanges = [];
     
     let hasChanges = false;
+    let keptCount = 0;
     
     bedsList.forEach(bedName => {
         const currentPat = matchedPatients.find(p => p.cama === bedName);
         const extPat = extracted.find(e => e.cama === bedName);
-        const extName = extPat ? extPat.nombre.trim().toUpperCase() : '';
-        const currentName = currentPat ? currentPat.nombre.trim().toUpperCase() : '';
+        const hasExtData = extPat && extPat.nombre && extPat.nombre.trim() !== '';
         
-        if (currentName !== extName) {
-            if (currentName && !extName) {
-                hasChanges = true;
-                window.pendingCensusChanges.push({ type: 'discharge', bed: bedName, patientId: currentPat.id, name: currentPat.nombre });
-                changesListEl.innerHTML += `
-                    <div style="display:flex; justify-content:space-between; align-items:center; background:#fdf2e9; border:1px solid #fadbd8; border-radius:8px; padding:10px 12px; font-size:0.85rem; color:#d35400;">
-                        <div><strong style="color:#b9770e;">🔴 Alta:</strong> Cama <b>${bedName}</b></div>
-                        <div><b>${currentPat.nombre}</b></div>
-                    </div>`;
-            } else if (!currentName && extName) {
+        if (!currentPat && hasExtData) {
+            // New patient admission
+            hasChanges = true;
+            window.pendingCensusChanges.push({
+                type: 'admission',
+                bed: bedName,
+                name: extPat.nombre.trim(),
+                num_ficha: extPat.num_ficha || '',
+                edad: extPat.edad ? parseInt(extPat.edad) : 0,
+                regimen: extPat.regimen || '',
+                patologia_dm: !!extPat.patologia_dm,
+                observaciones: extPat.observaciones || ''
+            });
+            changesListEl.innerHTML += `
+                <div style="display:flex; justify-content:space-between; align-items:center; background:#e8f8f5; border:1px solid #a3e4d7; border-radius:8px; padding:10px 12px; font-size:0.85rem; color:#16a085;">
+                    <div><strong style="color:#117a65;">🟢 Nuevo Ingreso:</strong> Cama <b>${bedName}</b> ${extPat.num_ficha ? '(Ficha: ' + extPat.num_ficha + ')' : ''}</div>
+                    <div><b>${extPat.nombre}</b></div>
+                </div>`;
+        } else if (currentPat && hasExtData) {
+            if (isSamePatientOrMatch(currentPat, extPat)) {
+                // Same patient! Update diet/regimen/ficha without discharging
+                const newRegimen = extPat.regimen && extPat.regimen !== currentPat.metadata?.regimen;
+                const newFicha = extPat.num_ficha && extPat.num_ficha !== (currentPat.metadata?.num_ficha || '');
+                const newDm = extPat.patologia_dm !== !!currentPat.metadata?.patologia_dm;
+                const newObs = extPat.observaciones && extPat.observaciones !== (currentPat.metadata?.observaciones_generales || '');
+
+                if (newRegimen || newFicha || newDm || newObs) {
+                    hasChanges = true;
+                    window.pendingCensusChanges.push({
+                        type: 'update',
+                        bed: bedName,
+                        patientId: currentPat.id,
+                        name: currentPat.nombre,
+                        num_ficha: extPat.num_ficha || currentPat.metadata?.num_ficha || '',
+                        edad: extPat.edad || currentPat.edad || 0,
+                        regimen: extPat.regimen || currentPat.metadata?.regimen || '',
+                        patologia_dm: extPat.patologia_dm !== undefined ? extPat.patologia_dm : !!currentPat.metadata?.patologia_dm,
+                        observaciones: extPat.observaciones || currentPat.metadata?.observaciones_generales || ''
+                    });
+                    changesListEl.innerHTML += `
+                        <div style="display:flex; justify-content:space-between; align-items:center; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:10px 12px; font-size:0.85rem; color:#1d4ed8;">
+                            <div><strong style="color:#1e40af;">🔄 Actualización:</strong> Cama <b>${bedName}</b> (Mismo paciente)</div>
+                            <div><b>${currentPat.nombre}</b> ${extPat.regimen ? '<span style="font-size:0.75rem; color:#475569;">(' + extPat.regimen + ')</span>' : ''}</div>
+                        </div>`;
+                }
+            } else {
+                // Different patient in bed: Move current patient to "Pacientes que ya no están en el servicio" (cama: '')
+                // NEVER discharge automatically!
                 hasChanges = true;
                 window.pendingCensusChanges.push({
-                    type: 'admission',
+                    type: 'replace',
                     bed: bedName,
-                    name: extName,
-                    num_ficha: extPat.num_ficha || '',
-                    edad: extPat.edad ? parseInt(extPat.edad) : 0,
-                    regimen: extPat.regimen || '',
-                    patologia_dm: !!extPat.patologia_dm,
-                    observaciones: extPat.observaciones || ''
-                });
-                changesListEl.innerHTML += `
-                    <div style="display:flex; justify-content:space-between; align-items:center; background:#e8f8f5; border:1px solid #a3e4d7; border-radius:8px; padding:10px 12px; font-size:0.85rem; color:#16a085;">
-                        <div><strong style="color:#117a65;">🟢 Ingreso:</strong> Cama <b>${bedName}</b> ${extPat.num_ficha ? '(Ficha: ' + extPat.num_ficha + ')' : ''}</div>
-                        <div><b>${extName}</b></div>
-                    </div>`;
-            } else if (currentName && extName) {
-                hasChanges = true;
-                window.pendingCensusChanges.push({ type: 'discharge', bed: bedName, patientId: currentPat.id, name: currentPat.nombre });
-                window.pendingCensusChanges.push({
-                    type: 'admission',
-                    bed: bedName,
-                    name: extName,
+                    oldPatientId: currentPat.id,
+                    oldName: currentPat.nombre,
+                    name: extPat.nombre.trim(),
                     num_ficha: extPat.num_ficha || '',
                     edad: extPat.edad ? parseInt(extPat.edad) : 0,
                     regimen: extPat.regimen || '',
@@ -9120,41 +10195,39 @@ async function showCensusReviewModal(extracted, bedsList, activeLoc) {
                 changesListEl.innerHTML += `
                     <div style="display:flex; flex-direction:column; gap:6px; background:#fef9e7; border:1px solid #fdebd0; border-radius:8px; padding:10px 12px; font-size:0.85rem; color:#b7950b;">
                         <div style="display:flex; justify-content:space-between;">
-                            <div><strong style="color:#b9770e;">🔴 Alta (relevo):</strong> Cama <b>${bedName}</b></div>
-                            <div><b>${currentPat.nombre}</b></div>
+                            <div><strong style="color:#b9770e;">🔄 Relevo de Cama:</strong> Cama <b>${bedName}</b></div>
+                            <div><b>${extPat.nombre}</b></div>
                         </div>
-                        <div style="display:flex; justify-content:space-between; border-top:1px dashed #fdebd0; padding-top:4px; margin-top:4px;">
-                            <div><strong style="color:#117a65;">🟢 Ingreso (relevo):</strong> Cama <b>${bedName}</b> ${extPat.num_ficha ? '(Ficha: ' + extPat.num_ficha + ')' : ''}</div>
-                            <div><b>${extName}</b></div>
+                        <div style="font-size:0.75rem; color:#78350f; border-top:1px dashed #fdebd0; padding-top:4px;">
+                            ℹ️ <i>${currentPat.nombre}</i> se traslada a "Pacientes que ya no están en el servicio" (no se da de alta).
                         </div>
                     </div>`;
             }
+        } else if (currentPat && !hasExtData) {
+            // Patient currently in bed, but DieTools didn't list this bed:
+            // ALWAYS KEEP THE PATIENT IN BED! NEVER AUTO-DISCHARGE!
+            keptCount++;
         }
     });
-    
-    const floatingInService = matchedPatients.filter(p => !bedsList.includes(p.cama));
-    if (floatingInService.length > 0) {
+
+    if (keptCount > 0) {
         changesListEl.innerHTML += `
-            <div style="margin-top:12px; background:#fff1f2; border:1px solid #fecdd3; border-radius:8px; padding:10px 12px;">
-                <label style="display:flex; align-items:center; gap:8px; font-size:0.82rem; font-weight:700; color:#be123c; cursor:pointer;">
-                    <input type="checkbox" id="chkAutoDischargeFloatingInCensus" checked style="width:16px; height:16px; accent-color:#be123c;">
-                    🧹 Dar de alta automáticamente a los ${floatingInService.length} paciente(s) sin cama al aplicar este censo
-                </label>
-            </div>
-        `;
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px 12px; font-size:0.8rem; color:#475569;">
+                🛡️ <b>${keptCount} paciente(s)</b> continúan en sus camas asignadas (no se dan de alta automáticamente).
+            </div>`;
     }
 
-    if (!hasChanges && floatingInService.length === 0) {
+    if (!hasChanges) {
         const anyExtracted = extracted.some(e => e.nombre && e.nombre.trim() !== '');
         if (!anyExtracted && matchedPatients.length === 0) {
             changesListEl.innerHTML = `
                 <div style="background:#fff3cd; border:1px solid #ffeeba; border-radius:8px; padding:15px; color:#856404; font-size:0.85rem; text-align:center;">
-                    <p style="margin:0 0 8px 0; font-weight:700;">⚠️ No se leyeron nombres en la imagen.</p>
-                    <p style="margin:0 0 12px 0; font-size:0.8rem;">La captura puede estar con reflejos. Puedes pegar el texto copiado de Dietools o reintentar:</p>
-                    <button class="btn-micro" style="background:#059669; color:white; font-weight:700; padding:8px 16px; border-radius:6px; cursor:pointer;" onclick="window.closeCensusReviewModal(); window.openPasteCensusModal();">📋 Pegar Texto Dietools</button>
+                    <p style="margin:0 0 8px 0; font-weight:700;">⚠️ No se leyeron camas o nombres en el texto pegado.</p>
+                    <p style="margin:0 0 12px 0; font-size:0.8rem;">Verifica que el texto contenga el formato de la planilla de Dietools.</p>
+                    <button class="btn-micro" style="background:#059669; color:white; font-weight:700; padding:8px 16px; border-radius:6px; cursor:pointer;" onclick="window.closeCensusReviewModal(); window.openPasteCensusModal();">📋 Reintentar Pegar Texto</button>
                 </div>`;
         } else {
-            changesListEl.innerHTML = '<p style="text-align:center; opacity:0.6; padding: 20px 0;">El censo de la captura coincide exactamente con los pacientes registrados. No se requieren cambios.</p>';
+            changesListEl.innerHTML = '<p style="text-align:center; color:#475569; padding: 20px 0;">Todos los pacientes registrados coinciden con los datos de Dietools. No se requieren cambios.</p>';
         }
     }
     
@@ -9163,26 +10236,15 @@ async function showCensusReviewModal(extracted, bedsList, activeLoc) {
 }
 
 window.applyCensusChanges = async function() {
-    const chkAutoDischarge = document.getElementById('chkAutoDischargeFloatingInCensus');
-    const shouldDischargeFloating = chkAutoDischarge && chkAutoDischarge.checked;
-
-    if ((!window.pendingCensusChanges || window.pendingCensusChanges.length === 0) && !shouldDischargeFloating) {
+    if (!window.pendingCensusChanges || window.pendingCensusChanges.length === 0) {
         const modal = document.getElementById('censusReviewModal');
         if (modal) modal.classList.remove('active');
         return;
     }
     
-    // 1. Close modal instantly!
+    // 1. Close modal instantly
     const modal = document.getElementById('censusReviewModal');
     if (modal) modal.classList.remove('active');
-
-    if (shouldDischargeFloating) {
-        setTimeout(() => {
-            if (typeof window.dischargeAllFloatingPatients === 'function') {
-                window.dischargeAllFloatingPatients(true);
-            }
-        }, 150);
-    }
 
     const activeLocStr = localStorage.getItem('activeLocation');
     const activeLoc = activeLocStr ? JSON.parse(activeLocStr) : { floor: 7, serviceId: 'ala_d', serviceName: 'Ala D' };
@@ -9195,14 +10257,19 @@ window.applyCensusChanges = async function() {
     }
 
     let currentUserId = AppState?.user?.id;
+    if (!currentUserId && supabaseClient) {
+        try {
+            const { data: uData } = await supabaseClient.auth.getUser();
+            if (uData && uData.user) currentUserId = uData.user.id;
+        } catch(e) {}
+    }
+
     const pending = [...window.pendingCensusChanges];
     window.pendingCensusChanges = [];
 
     // 2. Update local storage cache INSTANTLY
     pending.forEach(change => {
-        if (change.type === 'discharge') {
-            localPatients = localPatients.filter(p => p.id !== change.patientId && p.cama !== change.bed);
-        } else if (change.type === 'admission') {
+        if (change.type === 'admission') {
             const formattedName = window.formatPatientNameFirst ? window.formatPatientNameFirst(change.name) : change.name;
             const newPatientData = {
                 id: 'pat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
@@ -9233,6 +10300,53 @@ window.applyCensusChanges = async function() {
             };
             localPatients = localPatients.filter(p => p.cama !== change.bed);
             localPatients.push(newPatientData);
+        } else if (change.type === 'update') {
+            const pat = localPatients.find(p => p.id === change.patientId || p.cama === change.bed);
+            if (pat) {
+                pat.metadata = pat.metadata || {};
+                if (change.num_ficha) pat.metadata.num_ficha = change.num_ficha;
+                if (change.regimen) pat.metadata.regimen = change.regimen;
+                if (change.patologia_dm !== undefined) pat.metadata.patologia_dm = change.patologia_dm;
+                if (change.observaciones) pat.metadata.observaciones_generales = change.observaciones;
+                if (change.edad) pat.edad = change.edad;
+            }
+        } else if (change.type === 'replace') {
+            // Previous patient moves to floating (cama: '') without discharging
+            const oldPat = localPatients.find(p => p.id === change.oldPatientId || p.cama === change.bed);
+            if (oldPat) {
+                oldPat.cama = '';
+            }
+            // Admit new patient to bed
+            const formattedName = window.formatPatientNameFirst ? window.formatPatientNameFirst(change.name) : change.name;
+            const newPatientData = {
+                id: 'pat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+                nombre: formattedName,
+                edad: change.edad || 0,
+                peso_kg: 0,
+                estatura_m: 0,
+                sexo: 'm',
+                actividad: 1.2,
+                diagnostico: '',
+                cama: change.bed,
+                estado_sala: 'activo',
+                tmt: 0,
+                ia_report: null,
+                created_at: new Date().toISOString(),
+                user_id: currentUserId || null,
+                metadata: {
+                    num_ficha: change.num_ficha || '',
+                    regimen: change.regimen || '',
+                    patologia_dm: !!change.patologia_dm,
+                    observaciones_generales: change.observaciones || '',
+                    location: {
+                        floor: activeLoc.floor,
+                        serviceId: activeLoc.serviceId,
+                        serviceName: activeLoc.serviceName
+                    }
+                }
+            };
+            localPatients = localPatients.filter(p => (oldPat && p.id === oldPat.id) ? true : p.cama !== change.bed);
+            localPatients.push(newPatientData);
         }
     });
 
@@ -9240,54 +10354,106 @@ window.applyCensusChanges = async function() {
     
     // 3. Render table INSTANTLY!
     await window.renderWardBedsGrid();
-    showToast("🎉 ¡Censo asignado a las camas en tiempo récord!");
+    showToast("🎉 ¡Censo sincronizado exitosamente sin perder pacientes!");
 
-    // 4. Background non-blocking sync to Supabase
+    // 4. Fast Parallel Sync to Supabase
     if (supabaseClient) {
         (async () => {
-            for (const change of pending) {
-                try {
-                    if (change.type === 'discharge') {
-                        if (change.patientId) {
-                            await supabaseClient.from('pacientes').update({ estado_sala: 'de_alta' }).eq('id', change.patientId);
-                        }
-                    } else if (change.type === 'admission') {
-                        const formattedName = window.formatPatientNameFirst ? window.formatPatientNameFirst(change.name) : change.name;
-                        const { data: existingBedPat } = await supabaseClient
-                            .from('pacientes')
-                            .select('id')
-                            .eq('cama', change.bed)
-                            .neq('estado_sala', 'de_alta')
-                            .maybeSingle();
-
-                        const dbPayload = {
-                            nombre: formattedName,
-                            edad: change.edad || 0,
-                            cama: change.bed,
-                            estado_sala: 'activo',
-                            user_id: currentUserId || null,
-                            metadata: {
-                                num_ficha: change.num_ficha || '',
-                                regimen: change.regimen || '',
-                                patologia_dm: !!change.patologia_dm,
-                                observaciones_generales: change.observaciones || '',
-                                location: {
-                                    floor: activeLoc.floor,
-                                    serviceId: activeLoc.serviceId,
-                                    serviceName: activeLoc.serviceName
+            try {
+                const tasks = pending.map(async (change) => {
+                    try {
+                        if (change.type === 'admission') {
+                            const formattedName = window.formatPatientNameFirst ? window.formatPatientNameFirst(change.name) : change.name;
+                            const dbPayload = {
+                                nombre: formattedName,
+                                edad: change.edad || 0,
+                                cama: change.bed,
+                                estado_sala: 'activo',
+                                user_id: currentUserId || null,
+                                metadata: {
+                                    num_ficha: change.num_ficha || '',
+                                    regimen: change.regimen || '',
+                                    patologia_dm: !!change.patologia_dm,
+                                    observaciones_generales: change.observaciones || '',
+                                    location: {
+                                        floor: activeLoc.floor,
+                                        serviceId: activeLoc.serviceId,
+                                        serviceName: activeLoc.serviceName
+                                    }
                                 }
+                            };
+                            const { data: inserted, error } = await supabaseClient.from('pacientes').insert([dbPayload]).select('id, created_at').single();
+                            if (!error && inserted) {
+                                try {
+                                    let curCache = JSON.parse(localStorage.getItem('local_ward_patients') || '[]');
+                                    const matchItem = curCache.find(p => p.cama === change.bed && p.nombre === formattedName);
+                                    if (matchItem) {
+                                        matchItem.id = inserted.id;
+                                        matchItem.created_at = inserted.created_at;
+                                        localStorage.setItem('local_ward_patients', JSON.stringify(curCache));
+                                    }
+                                } catch(e) {}
                             }
-                        };
-
-                        if (existingBedPat && existingBedPat.id) {
-                            await supabaseClient.from('pacientes').update(dbPayload).eq('id', existingBedPat.id);
-                        } else {
-                            await supabaseClient.from('pacientes').insert([dbPayload]);
+                        } else if (change.type === 'update') {
+                            const dbId = change.patientId;
+                            if (dbId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(dbId)) {
+                                const { data: existing } = await supabaseClient.from('pacientes').select('metadata').eq('id', dbId).maybeSingle();
+                                const meta = { ...(existing?.metadata || {}) };
+                                if (change.num_ficha) meta.num_ficha = change.num_ficha;
+                                if (change.regimen) meta.regimen = change.regimen;
+                                if (change.patologia_dm !== undefined) meta.patologia_dm = change.patologia_dm;
+                                if (change.observaciones) meta.observaciones_generales = change.observaciones;
+                                
+                                await supabaseClient.from('pacientes').update({
+                                    metadata: meta,
+                                    edad: change.edad || undefined
+                                }).eq('id', dbId);
+                            }
+                        } else if (change.type === 'replace') {
+                            // Move old patient to floating
+                            if (change.oldPatientId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(change.oldPatientId)) {
+                                await supabaseClient.from('pacientes').update({ cama: '' }).eq('id', change.oldPatientId);
+                            }
+                            // Insert new patient
+                            const formattedName = window.formatPatientNameFirst ? window.formatPatientNameFirst(change.name) : change.name;
+                            const dbPayload = {
+                                nombre: formattedName,
+                                edad: change.edad || 0,
+                                cama: change.bed,
+                                estado_sala: 'activo',
+                                user_id: currentUserId || null,
+                                metadata: {
+                                    num_ficha: change.num_ficha || '',
+                                    regimen: change.regimen || '',
+                                    patologia_dm: !!change.patologia_dm,
+                                    observaciones_generales: change.observaciones || '',
+                                    location: {
+                                        floor: activeLoc.floor,
+                                        serviceId: activeLoc.serviceId,
+                                        serviceName: activeLoc.serviceName
+                                    }
+                                }
+                            };
+                            const { data: inserted, error } = await supabaseClient.from('pacientes').insert([dbPayload]).select('id, created_at').single();
+                            if (!error && inserted) {
+                                try {
+                                    let curCache = JSON.parse(localStorage.getItem('local_ward_patients') || '[]');
+                                    const matchItem = curCache.find(p => p.cama === change.bed && p.nombre === formattedName);
+                                    if (matchItem) {
+                                        matchItem.id = inserted.id;
+                                        matchItem.created_at = inserted.created_at;
+                                        localStorage.setItem('local_ward_patients', JSON.stringify(curCache));
+                                    }
+                                } catch(e) {}
+                            }
                         }
+                    } catch(itemErr) {
+                        console.warn("Background sync error for item:", change, itemErr);
                     }
-                } catch(err) {
-                    console.error("Background sync error for bed:", change.bed, err);
-                }
+                });
+                await Promise.all(tasks);
+            } catch(syncErr) {
+                console.warn("Background batch sync warning:", syncErr);
             }
         })();
     }
@@ -9589,6 +10755,52 @@ window.parseSmartHeight = function(val) {
     return { meters: parseFloat(meters.toFixed(4)), cm: Math.round(cm) };
 };
 
+window.computeNutritionalStatusAbbrev = function(imcNum, age) {
+    if (!imcNum || isNaN(imcNum) || imcNum <= 0) return { abbrev: '--', bgStyle: 'background:#dcfce7; color:#166534; font-weight:700;' };
+    const isElderly = (age || 0) >= 65;
+    if (isElderly) {
+        if (imcNum < 23) return { abbrev: 'BP', bgStyle: 'background:#fee2e2; color:#991b1b; font-weight:800;' };
+        if (imcNum < 28) return { abbrev: 'N', bgStyle: 'background:#dcfce7; color:#166534; font-weight:700;' };
+        if (imcNum < 32) return { abbrev: 'SP', bgStyle: 'background:#fef3c7; color:#92400e; font-weight:700;' };
+        return { abbrev: 'OB', bgStyle: 'background:#ffedd5; color:#c2410c; font-weight:700;' };
+    } else {
+        if (imcNum < 18.5) return { abbrev: 'BP', bgStyle: 'background:#fee2e2; color:#991b1b; font-weight:800;' };
+        if (imcNum < 25) return { abbrev: 'N', bgStyle: 'background:#dcfce7; color:#166534; font-weight:700;' };
+        if (imcNum < 30) return { abbrev: 'SP', bgStyle: 'background:#fef3c7; color:#92400e; font-weight:700;' };
+        return { abbrev: 'OB', bgStyle: 'background:#ffedd5; color:#c2410c; font-weight:700;' };
+    }
+};
+
+window.calculateTableIMC = function(patientId) {
+    const row = document.getElementById(`row_pat_${patientId}`);
+    if (!row) return;
+
+    const pesoInput = row.querySelector('.input-table-peso');
+    const tallaInput = row.querySelector('.input-table-talla');
+    const imcCell = document.getElementById(`table_imc_${patientId}`);
+    const estCell = document.getElementById(`table_est_${patientId}`);
+
+    if (!pesoInput || !tallaInput || !imcCell || !estCell) return;
+
+    const peso = parseFloat(pesoInput.value) || 0;
+    const rawTalla = tallaInput.value;
+    const { meters } = window.parseSmartHeight(rawTalla);
+
+    if (peso > 0 && meters > 0) {
+        const imcNum = peso / (meters * meters);
+        imcCell.innerText = imcNum.toFixed(1).replace('.', ',');
+
+        const age = parseFloat(row.dataset.age) || 0;
+        const { abbrev, bgStyle } = window.computeNutritionalStatusAbbrev(imcNum, age);
+        estCell.innerText = abbrev;
+        estCell.style = `padding: 6px 10px; text-align: center; ${bgStyle}`;
+    } else {
+        imcCell.innerText = '--';
+        estCell.innerText = '--';
+        estCell.style = 'padding: 6px 10px; text-align: center; font-weight:700; color:#1e3a8a;';
+    }
+};
+
 window.quickUpdatePatientField = async function(id, field, value) {
     let updateObj = {};
     let updatedMetadata = {};
@@ -9606,12 +10818,20 @@ window.quickUpdatePatientField = async function(id, field, value) {
             else if (field === 'peso_kg') {
                 locPat.peso_kg = value ? parseFloat(value) : 0;
                 const { meters } = window.parseSmartHeight(locPat.estatura_m || locPat.talla_cm);
-                if (meters > 0 && locPat.peso_kg > 0) locPat.metadata.imc = parseFloat((locPat.peso_kg / (meters * meters)).toFixed(1));
+                if (meters > 0 && locPat.peso_kg > 0) {
+                    locPat.metadata.imc = parseFloat((locPat.peso_kg / (meters * meters)).toFixed(1));
+                    locPat.metadata.estado_nutricional = window.computeNutritionalStatusAbbrev(locPat.metadata.imc, locPat.edad).abbrev;
+                }
+                if (typeof window.calculateTableIMC === 'function') window.calculateTableIMC(id);
             } else if (field === 'talla_cm' || field === 'estatura_m') {
                 const { meters, cm } = window.parseSmartHeight(value);
                 locPat.talla_cm = cm;
                 locPat.estatura_m = meters;
-                if (locPat.peso_kg && meters > 0) locPat.metadata.imc = parseFloat((locPat.peso_kg / (meters * meters)).toFixed(1));
+                if (locPat.peso_kg && meters > 0) {
+                    locPat.metadata.imc = parseFloat((locPat.peso_kg / (meters * meters)).toFixed(1));
+                    locPat.metadata.estado_nutricional = window.computeNutritionalStatusAbbrev(locPat.metadata.imc, locPat.edad).abbrev;
+                }
+                if (typeof window.calculateTableIMC === 'function') window.calculateTableIMC(id);
             } else if (field === 'num_ficha') locPat.metadata.num_ficha = value;
             else if (field === 'patologia_dm') locPat.metadata.patologia_dm = !!value;
             else if (field === 'patologia_hta') locPat.metadata.patologia_hta = !!value;
@@ -9639,13 +10859,19 @@ window.quickUpdatePatientField = async function(id, field, value) {
                 const pKg = value ? parseFloat(value) : null;
                 updateObj.peso_kg = pKg;
                 const { meters } = window.parseSmartHeight(p.estatura_m || p.talla_cm);
-                if (meters > 0 && pKg > 0) updatedMetadata.imc = parseFloat((pKg / (meters * meters)).toFixed(1));
+                if (meters > 0 && pKg > 0) {
+                    updatedMetadata.imc = parseFloat((pKg / (meters * meters)).toFixed(1));
+                    updatedMetadata.estado_nutricional = window.computeNutritionalStatusAbbrev(updatedMetadata.imc, p.edad).abbrev;
+                }
                 updateObj.metadata = updatedMetadata;
             } else if (field === 'talla_cm' || field === 'estatura_m') {
                 const { meters, cm } = window.parseSmartHeight(value);
                 updateObj.talla_cm = cm || null;
                 updateObj.estatura_m = meters || null;
-                if (p.peso_kg && meters > 0) updatedMetadata.imc = parseFloat((p.peso_kg / (meters * meters)).toFixed(1));
+                if (p.peso_kg && meters > 0) {
+                    updatedMetadata.imc = parseFloat((p.peso_kg / (meters * meters)).toFixed(1));
+                    updatedMetadata.estado_nutricional = window.computeNutritionalStatusAbbrev(updatedMetadata.imc, p.edad).abbrev;
+                }
                 updateObj.metadata = updatedMetadata;
             } else if (field === 'num_ficha') {
                 updatedMetadata.num_ficha = value;
@@ -10123,6 +11349,10 @@ window.dischargeAllFloatingPatients = async function(skipConfirm = false) {
         const cleanPBed = p.cama ? p.cama.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
         const isBedInService = bedsList.some(b => b.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanPBed || b === p.cama);
         if (p.metadata && p.metadata.location && p.metadata.location.serviceId) {
+            const locFloor = p.metadata.location.floor;
+            if (locFloor && activeLoc.floor && String(locFloor) !== String(activeLoc.floor)) {
+                return isBedInService;
+            }
             return p.metadata.location.serviceId === activeLoc.serviceId || isBedInService;
         }
         return isBedInService;
@@ -10311,15 +11541,149 @@ window.applyColumnVisibilityStyles = function() {
     styleTag.textContent = css;
 };
 
-window.renderWardBedsGrid = async function() {
+// --- TOGGLE EVAL STATUS (VI / VGO) MANUAL & AUTOMATIC HANDLER ---
+window.togglePatientEvalStatus = async function(patientId, evalType, event) {
+    if (event) event.stopPropagation();
+
+    let localCache = [];
+    try {
+        localCache = JSON.parse(localStorage.getItem('local_ward_patients') || '[]');
+    } catch (e) {
+        localCache = [];
+    }
+
+    let p = localCache.find(x => String(x.id) === String(patientId));
+
+    if (!p && AppState.patient && String(AppState.patient.id) === String(patientId)) {
+        p = AppState.patient;
+    }
+
+    if (!p && typeof supabaseClient !== 'undefined' && supabaseClient) {
+        try {
+            const { data: dbP } = await supabaseClient.from('pacientes').select('*').eq('id', patientId).maybeSingle();
+            if (dbP) p = dbP;
+        } catch(e) {}
+    }
+
+    if (!p) {
+        alert("No se pudo localizar el paciente seleccionado.");
+        return;
+    }
+
+    p.metadata = p.metadata || {};
+    const nowIso = new Date().toISOString();
+
+    let isViActive = false;
+    let isVgoActive = false;
+
+    if (evalType === 'vi') {
+        const currentVal = Boolean(p.metadata.has_vi);
+        p.metadata.has_vi = !currentVal;
+        isViActive = p.metadata.has_vi;
+        isVgoActive = Boolean(p.metadata.has_vgo);
+        if (!currentVal) {
+            p.metadata.fecha_vi = nowIso;
+            p.metadata.fecha_evaluacion = nowIso;
+            p.evaluado = true;
+        } else {
+            delete p.metadata.fecha_vi;
+            if (!p.metadata.has_vgo) {
+                p.evaluado = false;
+            }
+        }
+    } else if (evalType === 'vgo') {
+        const currentVal = Boolean(p.metadata.has_vgo);
+        p.metadata.has_vgo = !currentVal;
+        isVgoActive = p.metadata.has_vgo;
+        isViActive = Boolean(p.metadata.has_vi);
+        if (!currentVal) {
+            p.metadata.has_vgo = true;
+            isVgoActive = true;
+            p.metadata.fecha_vgo = nowIso;
+            p.metadata.fecha_evaluacion = nowIso;
+            p.evaluado = true;
+        } else {
+            delete p.metadata.fecha_vgo;
+            if (!p.metadata.has_vi) {
+                p.evaluado = false;
+            }
+        }
+    }
+
+    // 1. Instant Optimistic DOM Update on the clicked button (Zero latency, smooth 60fps)
+    const btn = event?.currentTarget;
+    if (btn) {
+        if (evalType === 'vi') {
+            btn.innerHTML = isViActive ? '✓ VI' : '○ VI';
+            btn.style.background = isViActive ? '#10b981' : '#f1f5f9';
+            btn.style.color = isViActive ? 'white' : '#64748b';
+            btn.style.border = isViActive ? '1px solid #059669' : '1px solid #cbd5e1';
+        } else if (evalType === 'vgo') {
+            btn.innerHTML = isVgoActive ? '✓ VGO' : '○ VGO';
+            btn.style.background = isVgoActive ? '#3b82f6' : '#f1f5f9';
+            btn.style.color = isVgoActive ? 'white' : '#64748b';
+            btn.style.border = isVgoActive ? '1px solid #2563eb' : '1px solid #cbd5e1';
+        }
+
+        // If newly evaluated today, hide the ⚠️ reeval tag immediately next to the button
+        if ((evalType === 'vi' && isViActive) || (evalType === 'vgo' && isVgoActive)) {
+            const container = btn.parentElement;
+            if (container) {
+                const reevalBadge = container.querySelector('.badge-reeval');
+                if (reevalBadge) reevalBadge.style.display = 'none';
+            }
+        }
+    }
+
+    // 2. Update local cache
+    const cacheIdx = localCache.findIndex(x => String(x.id) === String(patientId));
+    if (cacheIdx >= 0) {
+        localCache[cacheIdx] = { ...localCache[cacheIdx], ...p, metadata: p.metadata, evaluado: p.evaluado };
+    } else {
+        localCache.push(p);
+    }
+    localStorage.setItem('local_ward_patients', JSON.stringify(localCache));
+
+    if (AppState.patient && String(AppState.patient.id) === String(patientId)) {
+        AppState.patient.metadata = p.metadata;
+        AppState.patient.evaluado = p.evaluado;
+    }
+
+    // 3. Sync to Supabase in background asynchronously (fire-and-forget, non-blocking)
+    if (typeof supabaseClient !== 'undefined' && supabaseClient && !String(patientId).startsWith('pat_')) {
+        supabaseClient.from('pacientes').update({
+            evaluado: p.evaluado,
+            metadata: p.metadata,
+            updated_at: new Date()
+        }).eq('id', patientId).then(() => {}).catch(e => {
+            console.warn("Error updating eval status in Supabase:", e);
+        });
+    }
+
+    // 4. Update view silently in background so the table never blanks or closes
+    if (typeof window.renderWardBedsGrid === 'function') {
+        window.renderWardBedsGrid(true);
+    }
+};
+
+window.renderWardBedsGrid = async function(silent = false) {
     const activeLocStr = localStorage.getItem('activeLocation');
     if (!activeLocStr) return;
     const activeLoc = JSON.parse(activeLocStr);
     
     const grid = document.getElementById('wardBedsGrid');
     if (!grid) return;
+
+    // Preserve scroll positions to prevent jumping
+    const scrollY = window.scrollY;
+    const prevScrollDiv = grid.querySelector('div[style*="overflow-x"]');
+    const scrollX = prevScrollDiv ? prevScrollDiv.scrollLeft : 0;
     
-    grid.innerHTML = '<p style="opacity:0.5; text-align:center; padding: 40px;">Cargando salas y camas...</p>';
+    // Only show "Cargando..." on cold initial load when grid is completely empty
+    const hasExistingContent = grid.children.length > 0 && !grid.innerHTML.includes('Cargando salas');
+    if (!silent && !hasExistingContent) {
+        grid.innerHTML = '<p style="opacity:0.5; text-align:center; padding: 40px;">Cargando salas y camas...</p>';
+    }
     
     // Check if admin is logged in to show bed tools
     const userEmail = AppState.user?.email || '';
@@ -10372,7 +11736,16 @@ window.renderWardBedsGrid = async function() {
             localCache.forEach(lp => {
                 if (!lp || lp.estado_sala === 'de_alta' || lp.estado_sala === 'eliminado') return;
                 
-                const idx = activePatients.findIndex(ap => (ap.id === lp.id) || (ap.cama && lp.cama && ap.cama.trim().toUpperCase() === lp.cama.trim().toUpperCase()));
+                const idx = activePatients.findIndex(ap => {
+                    if (ap.id === lp.id) return true;
+                    if (ap.cama && lp.cama && ap.cama.trim().toUpperCase() === lp.cama.trim().toUpperCase()) {
+                        const apSrv = ap.metadata?.location?.serviceId;
+                        const lpSrv = lp.metadata?.location?.serviceId;
+                        if (apSrv && lpSrv) return apSrv === lpSrv;
+                        return true;
+                    }
+                    return false;
+                });
                 if (idx >= 0) {
                     const realDbId = activePatients[idx].id;
                     activePatients[idx] = {
@@ -10393,16 +11766,103 @@ window.renderWardBedsGrid = async function() {
             console.error("Error merging local ward patients:", e);
         }
         
-        // Filter patients matched to this service
+        // Filter patients matched to this service (strict service isolation)
         const matchedPatients = activePatients.filter(p => {
             const cleanPBed = p.cama ? p.cama.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
             const isBedInService = bedsList.some(b => b.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanPBed || b === p.cama);
 
             if (p.metadata && p.metadata.location && p.metadata.location.serviceId) {
-                return p.metadata.location.serviceId === activeLoc.serviceId || isBedInService;
+                const locFloor = p.metadata.location.floor;
+                if (locFloor && activeLoc.floor && String(locFloor) !== String(activeLoc.floor)) {
+                    return false;
+                }
+                return p.metadata.location.serviceId === activeLoc.serviceId;
             }
             return isBedInService;
         });
+        
+        // 2b. Compute clinical evaluation statuses (VI, VGO, 7-day reevaluation check)
+        const evalFilterSelect = document.getElementById('wardEvalFilterSelect');
+        const evalFilter = evalFilterSelect ? evalFilterSelect.value : 'all';
+        let reevalCount = 0;
+        const now = new Date();
+
+        matchedPatients.forEach(p => {
+            const hasVI = !!(p.has_vi || p.metadata?.has_vi);
+            const hasVGO = !!(p.has_vgo || p.metadata?.has_vgo);
+
+            // Determine latest evaluation date
+            const lastEvalDateStr = p.fecha_vgo || p.metadata?.fecha_vgo || p.fecha_vi || p.metadata?.fecha_vi || p.metadata?.fecha_evaluacion || p.created_at;
+            let daysElapsed = 0;
+            if (lastEvalDateStr) {
+                const evalD = new Date(lastEvalDateStr);
+                if (!isNaN(evalD.getTime())) {
+                    const diffTime = Math.max(0, now.getTime() - evalD.getTime());
+                    daysElapsed = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                }
+            }
+
+            const needsReeval = daysElapsed >= 7;
+            if (needsReeval) {
+                reevalCount++;
+            }
+
+            p._hasVI = hasVI;
+            p._hasVGO = hasVGO;
+            p._daysElapsed = daysElapsed;
+            p._needsReeval = needsReeval;
+
+            let matches = true;
+            if (evalFilter === 'reeval') {
+                matches = needsReeval;
+            } else if (evalFilter === 'none') {
+                matches = !hasVI && !hasVGO;
+            } else if (evalFilter === 'vi_only') {
+                matches = hasVI && !hasVGO;
+            } else if (evalFilter === 'vi_and_vgo') {
+                matches = hasVI && hasVGO;
+            }
+            p._matchesEvalFilter = matches;
+        });
+
+        // Update reevaluation counter badge in header
+        const reevalBadge = document.getElementById('wardReevalCountBadge');
+        if (reevalBadge) {
+            if (reevalCount > 0) {
+                reevalBadge.style.display = 'inline-block';
+                reevalBadge.textContent = `⚠️ ${reevalCount} por reevaluar`;
+            } else {
+                reevalBadge.style.display = 'none';
+            }
+        }
+
+        // Helper function to render interactive evaluation pills [VI] [VGO] and Reeval badge
+        const getEvalPillsHTML = (p, isCompact = false) => {
+            if (!p) return '';
+            const viActive = !!p._hasVI;
+            const vgoActive = !!p._hasVGO;
+            const needsReeval = !!p._needsReeval;
+            const days = p._daysElapsed || 0;
+
+            const viStyle = viActive 
+                ? 'background:#10b981; color:white; border:1px solid #059669;' 
+                : 'background:#f1f5f9; color:#64748b; border:1px solid #cbd5e1;';
+            const vgoStyle = vgoActive 
+                ? 'background:#3b82f6; color:white; border:1px solid #2563eb;' 
+                : 'background:#f1f5f9; color:#64748b; border:1px solid #cbd5e1;';
+
+            const reevalHTML = needsReeval 
+                ? `<span class="badge-reeval" style="background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-size:${isCompact ? '0.62rem' : '0.68rem'}; font-weight:800; padding:1px 5px; border-radius:4px; white-space:nowrap; display:inline-block;" title="Han transcurrido ${days} días desde su última evaluación. ¡Requiere reevaluación!">⚠️ ${days}d</span>` 
+                : '';
+
+            return `
+                <div style="display:flex; align-items:center; justify-content:${isCompact ? 'center' : 'flex-end'}; gap:4px; flex-wrap:wrap;">
+                    <button onclick="event.stopPropagation(); window.togglePatientEvalStatus('${p.id}', 'vi', event);" style="${viStyle} padding:1px 5px; border-radius:4px; font-size:${isCompact ? '0.65rem' : '0.7rem'}; font-weight:800; cursor:pointer; transition:all 0.15s;" title="Valoración de Ingreso (VI) - Clic para alternar">${viActive ? '✓ VI' : '○ VI'}</button>
+                    <button onclick="event.stopPropagation(); window.togglePatientEvalStatus('${p.id}', 'vgo', event);" style="${vgoStyle} padding:1px 5px; border-radius:4px; font-size:${isCompact ? '0.65rem' : '0.7rem'}; font-weight:800; cursor:pointer; transition:all 0.15s;" title="Valoración Global Objetiva (VGO) - Clic para alternar">${vgoActive ? '✓ VGO' : '○ VGO'}</button>
+                    ${reevalHTML}
+                </div>
+            `;
+        };
         
         // 3. Group beds by room
         const groupOrder = [];
@@ -10502,7 +11962,7 @@ window.renderWardBedsGrid = async function() {
                                 <th class="col-imc" style="color: #1e293b; font-weight: 800; width: 75px; text-align: center; padding: 0;"><div class="resizable-th" style="width: 75px;">EST NUT</div></th>
                                 <th class="col-nrs" style="color: #1e293b; font-weight: 800; width: 50px; text-align: center; padding: 0;"><div class="resizable-th" style="width: 50px;">SCRG</div></th>
                                 <th class="col-lpp" style="color: #1e293b; font-weight: 800; width: 80px; text-align: center; padding: 0;"><div class="resizable-th" style="width: 80px;">RIESGO LPP</div></th>
-                                <th class="col-eval" style="color: #1e293b; font-weight: 800; width: 65px; text-align: center; padding: 0;"><div class="resizable-th" style="width: 65px;">EVAL</div></th>
+                                <th class="col-eval" style="color: #1e293b; font-weight: 800; width: 130px; text-align: center; padding: 0;"><div class="resizable-th" style="width: 130px;">VI / VGO</div></th>
                                 <th class="col-edad" style="color: #1e293b; font-weight: 800; width: 45px; text-align: center; padding: 0;"><div class="resizable-th" style="width: 45px;">SEXO</div></th>
                                 <th class="col-eval" style="color: #1e293b; font-weight: 800; width: 95px; text-align: center; padding: 0;"><div class="resizable-th" style="width: 95px;">FECHA INGR</div></th>
                                 <th style="color: #1e293b; font-weight: 800; width: 110px; text-align: center; padding: 0;"><div class="resizable-th" style="width: 110px;">ACCIONES</div></th>
@@ -10513,6 +11973,12 @@ window.renderWardBedsGrid = async function() {
 
             groupOrder.forEach((roomName, roomIndex) => {
                 const bedsInRoom = groupedBeds[roomName];
+                const matchingInRoom = bedsInRoom.filter(b => {
+                    const p = matchedPatients.find(pat => pat.cama === b);
+                    return p && (evalFilter === 'all' || p._matchesEvalFilter);
+                }).length;
+                if (evalFilter !== 'all' && matchingInRoom === 0) return;
+
                 const occupiedInRoom = bedsInRoom.filter(b => matchedPatients.some(p => p.cama === b)).length;
                 
                 tableHTML += `
@@ -10526,14 +11992,18 @@ window.renderWardBedsGrid = async function() {
                 bedsInRoom.forEach(bedName => {
                     const patient = matchedPatients.find(p => p.cama === bedName);
                     
+                    if (evalFilter !== 'all' && (!patient || !patient._matchesEvalFilter)) {
+                        return;
+                    }
+
                     if (patient) {
                         const isCritico = patient.estado_sala === 'critico' || patient.requiere_atencion;
                         const rowStyle = isCritico ? 'background: #fff5f5; border-bottom: 1px solid #fecaca;' : 'border-bottom: 1px solid #e2e8f0;';
                         
                         const numFicha = patient.metadata?.num_ficha || '';
                         
-                        // Parse history entries for Observaciones Generales
-                        const allHistoryForName = activePatients.filter(ap => ap.nombre === patient.nombre && ap.user_id === AppState.user.id);
+                        // Parse history entries for Observaciones Generales (Colaborativo entre colegas)
+                        const allHistoryForName = activePatients.filter(ap => ap.nombre === patient.nombre);
                         allHistoryForName.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
                         
                         const obsEntries = [];
@@ -10619,7 +12089,26 @@ window.renderWardBedsGrid = async function() {
                         let dietText = regimenVal ? (dietDetail ? `${regimenVal} | ${dietDetail}` : regimenVal) : (dietDetail || 'Normal');
 
                         // NRS score
-                        const nrsVal = patient.metadata?.nrs_score || patient.tmt || '--';
+                        // SCRG (Screening) column
+                        let nrsVal = '--';
+                        let nrsBgStyle = 'color: #1e3a8a; font-weight: 700;';
+                        const rawScrg = patient.metadata?.screening_score || patient.metadata?.nrs_score || patient.metadata?.nrs2002?.score || patient.metadata?.strongkids?.score || patient.metadata?.assessment?.cribaje?.nrs;
+                        if (rawScrg !== undefined && rawScrg !== null && rawScrg !== '' && rawScrg !== 'No evaluado' && rawScrg !== '--') {
+                            if (typeof rawScrg === 'number') {
+                                nrsVal = `${rawScrg} pts`;
+                                if (rawScrg >= 3) nrsBgStyle = 'background:#fee2e2; color:#c0392b; font-weight:800; border-radius:4px; padding:2px 6px;';
+                                else nrsBgStyle = 'background:#dcfce7; color:#166534; font-weight:700; border-radius:4px; padding:2px 6px;';
+                            } else {
+                                nrsVal = String(rawScrg);
+                                if (nrsVal.includes('pts')) {
+                                    const num = parseInt(nrsVal);
+                                    if (!isNaN(num)) {
+                                        if (num >= 3) nrsBgStyle = 'background:#fee2e2; color:#c0392b; font-weight:800; border-radius:4px; padding:2px 6px;';
+                                        else nrsBgStyle = 'background:#dcfce7; color:#166534; font-weight:700; border-radius:4px; padding:2px 6px;';
+                                    }
+                                }
+                            }
+                        }
 
                         // Evaluacion type
                         const evalType = patient.metadata?.patient_type === 'pediatric' ? 'Peds' : (patient.metadata?.patient_type === 'neonate' ? 'Neo' : 'VGO');
@@ -10644,7 +12133,7 @@ window.renderWardBedsGrid = async function() {
                         }
 
                         tableHTML += `
-                            <tr style="${rowStyle}">
+                            <tr id="row_pat_${patient.id}" data-patient-id="${patient.id}" data-age="${patient.edad || 0}" style="${rowStyle}">
                                 <td class="col-cama" style="padding: 0;"><div class="resizable-tr">🛏️ ${bedName}</div></td>
                                 <td class="col-ficha" style="padding: 0;"><div class="resizable-tr"><input type="text" value="${numFicha}" placeholder="Ficha / RUT" style="width:100%; border:none; background:transparent; font-size:0.72rem; font-weight:bold; color:#475569; outline:none;" onchange="window.quickUpdatePatientField('${patient.id}', 'num_ficha', this.value)" title="Número de Ficha / RUT (Editar)"></div></td>
                                 <td class="col-nombre" style="padding: 2px 6px; line-height: 1.2;">
@@ -10658,11 +12147,11 @@ window.renderWardBedsGrid = async function() {
                                 <td class="col-patologia" style="padding: 2px; text-align: center; background:#fdf2f8; border-right:1px solid #e2e8f0;"><input type="checkbox" ${patient.metadata?.patologia_erc ? 'checked' : ''} onchange="window.quickUpdatePatientField('${patient.id}', 'patologia_erc', this.checked)" style="cursor:pointer; width:15px; height:15px; accent-color:#dc2626;" title="ERC (Marcar/Desmarcar)"></td>
                                 <td class="col-dieta" style="padding: 2px 4px;"><textarea placeholder="Régimen / Dietoterapia" style="width:100%; border:none; background:transparent; font-size:0.7rem; color:#0f766e; font-weight:600; outline:none; resize:vertical; font-family:inherit; min-height:22px; line-height:1.2;" onchange="window.quickUpdatePatientField('${patient.id}', 'regimen', this.value)" title="Dietoterapia (Editar)">${dietText}</textarea></td>
                                 <td class="col-obs" style="padding: 2px 4px;"><textarea placeholder="Observaciones..." style="width:100%; border:none; background:transparent; font-size:0.65rem; color:#64748b; outline:none; resize:vertical; font-family:inherit; min-height:22px; line-height:1.2;" onchange="window.quickUpdatePatientField('${patient.id}', 'obs_generales', this.value)" title="Observaciones (Editar - Alt+Enter o Enter para nueva línea)">${customObs || ''}</textarea></td>
-                                <td class="col-antropo" style="padding: 2px; text-align: center;"><input type="number" step="0.1" value="${patient.peso_kg || ''}" placeholder="--" style="width:100%; border:none; background:transparent; text-align:center; font-weight:700; font-size:0.75rem; color:#1e293b; outline:none;" onchange="window.quickUpdatePatientField('${patient.id}', 'peso_kg', this.value)" title="Peso (Editar)"></td>
-                                <td class="col-antropo" style="padding: 2px; text-align: center;"><input type="number" step="0.1" value="${patient.talla_cm || (patient.estatura_m ? Math.round(patient.estatura_m * 100) : '')}" placeholder="--" style="width:100%; border:none; background:transparent; text-align:center; font-size:0.75rem; color:#1e293b; outline:none;" onchange="window.quickUpdatePatientField('${patient.id}', 'talla_cm', this.value)" title="Talla cm (Editar)"></td>
-                                <td class="col-imc" style="padding: 6px 10px; text-align: center; font-weight:700; color:#1e3a8a;">${imcStr}</td>
-                                <td class="col-imc" style="padding: 6px 10px; text-align: center; font-weight:700; color:#1e3a8a;">${abbrevStatus}</td>
-                                <td class="col-nrs" style="padding: 6px 10px; text-align: center;">${nrsVal}</td>
+                                <td class="col-antropo" style="padding: 2px; text-align: center;"><input type="number" step="0.1" value="${patient.peso_kg || ''}" placeholder="--" class="input-table-peso" style="width:100%; border:none; background:transparent; text-align:center; font-weight:700; font-size:0.75rem; color:#1e293b; outline:none;" oninput="window.calculateTableIMC('${patient.id}')" onchange="window.quickUpdatePatientField('${patient.id}', 'peso_kg', this.value)" title="Peso (Editar)"></td>
+                                <td class="col-antropo" style="padding: 2px; text-align: center;"><input type="number" step="0.1" value="${patient.talla_cm || (patient.estatura_m ? Math.round(patient.estatura_m * 100) : '')}" placeholder="--" class="input-table-talla" style="width:100%; border:none; background:transparent; text-align:center; font-size:0.75rem; color:#1e293b; outline:none;" oninput="window.calculateTableIMC('${patient.id}')" onchange="window.quickUpdatePatientField('${patient.id}', 'talla_cm', this.value)" title="Talla cm (Editar)"></td>
+                                <td class="col-imc" id="table_imc_${patient.id}" style="padding: 6px 10px; text-align: center; font-weight:700; color:#1e3a8a;">${imcStr}</td>
+                                <td class="col-imc" id="table_est_${patient.id}" style="padding: 6px 10px; text-align: center; ${statusBgStyle}">${abbrevStatus}</td>
+                                <td class="col-nrs" id="table_scrg_${patient.id}" style="padding: 6px 10px; text-align: center;"><span style="${nrsBgStyle}">${nrsVal}</span></td>
                                 <td class="col-lpp" style="padding: 2px; text-align: center;">
                                     <select onchange="window.quickUpdatePatientField('${patient.id}', 'riesgo_lpp', this.value)" style="border:none; background:transparent; font-weight:700; font-size:0.7rem; color:${patient.metadata?.riesgo_lpp === 'Alto' ? '#ef4444' : (patient.metadata?.riesgo_lpp === 'Medio' ? '#f59e0b' : '#10b981')}; outline:none; cursor:pointer;" title="Riesgo LPP (Editar)">
                                         <option value="Sin evaluar" ${!patient.metadata?.riesgo_lpp || patient.metadata?.riesgo_lpp === 'Sin evaluar' ? 'selected' : ''}>--</option>
@@ -10671,7 +12160,7 @@ window.renderWardBedsGrid = async function() {
                                         <option value="Alto" ${patient.metadata?.riesgo_lpp === 'Alto' ? 'selected' : ''}>Alto</option>
                                     </select>
                                 </td>
-                                <td class="col-eval" style="padding: 6px 10px; text-align: center; font-weight:600;">${evalType}</td>
+                                <td class="col-eval" style="padding: 4px 6px; text-align: center;">${getEvalPillsHTML(patient, true)}</td>
                                 <td class="col-edad" style="padding: 6px 10px; text-align: center;">${sexLetter}</td>
                                 <td class="col-eval" style="padding: 6px 10px; text-align: center;">${firstAdmittedStr}</td>
                                 <td style="padding: 6px 10px; text-align: center;">
@@ -10696,23 +12185,27 @@ window.renderWardBedsGrid = async function() {
             });
 
             // Floating patients at the bottom of the table
-            if (floatingPatients.length > 0) {
+            let tableFloatingPatients = floatingPatients;
+            if (evalFilter !== 'all') {
+                tableFloatingPatients = floatingPatients.filter(p => p._matchesEvalFilter);
+            }
+            if (tableFloatingPatients.length > 0) {
                 const isFloatingCollapsedTable = collapsedRooms.includes('PACIENTES QUE YA NO ESTÁN EN EL SERVICIO') || collapsedRooms.includes('Pacientes sin Cama');
                 tableHTML += `
                     <tr style="background: #fdf2f8; font-weight: 800; color: #db2777; border-top: 2px solid #fbcfe8; height: 36px; cursor: pointer;" onclick="window.toggleRoomCollapse('PACIENTES QUE YA NO ESTÁN EN EL SERVICIO', 'room-group-floating-table')">
                         <td colspan="20" style="padding: 6px 10px; font-size: 0.8rem; border-bottom: 1px solid #fbcfe8; text-transform: uppercase;">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
                                 <div>
-                                    <span class="room-toggle-icon" style="display:inline-block; transition: transform 0.2s ease; ${isFloatingCollapsedTable ? 'transform: rotate(-90deg);' : ''}">▼</span> ⚠️ PACIENTES QUE YA NO ESTÁN EN EL SERVICIO (${floatingPatients.length})
+                                    <span class="room-toggle-icon" style="display:inline-block; transition: transform 0.2s ease; ${isFloatingCollapsedTable ? 'transform: rotate(-90deg);' : ''}">▼</span> ⚠️ PACIENTES QUE YA NO ESTÁN EN EL SERVICIO (${tableFloatingPatients.length})
                                 </div>
-                                <button onclick="event.stopPropagation(); window.dischargeAllFloatingPatients();" style="background:#be123c; color:white; border:none; border-radius:6px; padding:3px 10px; font-size:0.72rem; font-weight:bold; cursor:pointer;" title="Dar de alta masiva a todos los pacientes que ya no están en este servicio">🧹 Dar de alta a todos (${floatingPatients.length})</button>
+                                <button onclick="event.stopPropagation(); window.dischargeAllFloatingPatients();" style="background:#be123c; color:white; border:none; border-radius:6px; padding:3px 10px; font-size:0.72rem; font-weight:bold; cursor:pointer;" title="Dar de alta masiva a todos los pacientes que ya no están en este servicio">🧹 Dar de alta a todos (${tableFloatingPatients.length})</button>
                             </div>
                         </td>
                     </tr>
                 `;
 
                 if (!isFloatingCollapsedTable) {
-                    floatingPatients.forEach(patient => {
+                    tableFloatingPatients.forEach(patient => {
                         const numFicha = patient.metadata?.num_ficha || '';
                         const ageStr = patient.edad || '--';
                         const imcNum = patient.peso_kg > 0 && patient.estatura_m > 0 ? (patient.peso_kg / (patient.estatura_m * patient.estatura_m)) : 0;
@@ -10727,14 +12220,33 @@ window.renderWardBedsGrid = async function() {
                             }
                         }
                         const dietText = (patient.metadata?.regimen || 'Normal');
-                        const nrsVal = patient.metadata?.nrs_score || patient.tmt || '--';
+                        // SCRG (Screening) column for floating patients
+                        let nrsVal = '--';
+                        let nrsBgStyle = 'color: #db2777; font-weight: 700;';
+                        const rawScrg = patient.metadata?.screening_score || patient.metadata?.nrs_score || patient.metadata?.nrs2002?.score || patient.metadata?.strongkids?.score || patient.metadata?.assessment?.cribaje?.nrs;
+                        if (rawScrg !== undefined && rawScrg !== null && rawScrg !== '' && rawScrg !== 'No evaluado' && rawScrg !== '--') {
+                            if (typeof rawScrg === 'number') {
+                                nrsVal = `${rawScrg} pts`;
+                                if (rawScrg >= 3) nrsBgStyle = 'background:#fee2e2; color:#c0392b; font-weight:800; border-radius:4px; padding:2px 6px;';
+                                else nrsBgStyle = 'background:#dcfce7; color:#166534; font-weight:700; border-radius:4px; padding:2px 6px;';
+                            } else {
+                                nrsVal = String(rawScrg);
+                                if (nrsVal.includes('pts')) {
+                                    const num = parseInt(nrsVal);
+                                    if (!isNaN(num)) {
+                                        if (num >= 3) nrsBgStyle = 'background:#fee2e2; color:#c0392b; font-weight:800; border-radius:4px; padding:2px 6px;';
+                                        else nrsBgStyle = 'background:#dcfce7; color:#166534; font-weight:700; border-radius:4px; padding:2px 6px;';
+                                    }
+                                }
+                            }
+                        }
                         const evalType = patient.metadata?.patient_type === 'pediatric' ? 'Peds' : (patient.metadata?.patient_type === 'neonate' ? 'Neo' : 'VGO');
                         const sexLetter = patient.sexo === 'm' ? 'M' : (patient.sexo === 'f' ? 'F' : '--');
                         const fIngr = patient.metadata?.fecha_ingreso_servicio || '--';
                         const dateStr = patient.created_at ? `${String(new Date(patient.created_at).getDate()).padStart(2, '0')}-${String(new Date(patient.created_at).getMonth() + 1).padStart(2, '0')}` : '';
 
                         tableHTML += `
-                            <tr style="background: #fff5f8; border-bottom: 1px solid #fbcfe8; height: 42px;">
+                            <tr id="row_pat_${patient.id}" data-patient-id="${patient.id}" data-age="${patient.edad || 0}" style="background: #fff5f8; border-bottom: 1px solid #fbcfe8; height: 42px;">
                                 <td class="col-cama" style="padding: 0;"><div class="resizable-tr" style="color: #db2777;">📋 Sin Cama</div></td>
                                 <td class="col-ficha" style="padding: 0;"><div class="resizable-tr"><input type="text" value="${numFicha}" placeholder="Ficha / RUT" style="width:100%; border:none; background:transparent; font-size:0.72rem; font-weight:bold; color:#475569; outline:none;" onchange="window.quickUpdatePatientField('${patient.id}', 'num_ficha', this.value)" title="Número de Ficha / RUT (Editar)"></div></td>
                                 <td class="col-nombre" style="padding: 2px 6px; line-height: 1.2;">
@@ -10748,11 +12260,11 @@ window.renderWardBedsGrid = async function() {
                                 <td class="col-patologia" style="padding: 2px; text-align: center; background:#fdf2f8; border-right:1px solid #e2e8f0;"><input type="checkbox" ${patient.metadata?.patologia_erc ? 'checked' : ''} onchange="window.quickUpdatePatientField('${patient.id}', 'patologia_erc', this.checked)" style="cursor:pointer; width:15px; height:15px; accent-color:#dc2626;" title="ERC (Marcar/Desmarcar)"></td>
                                 <td class="col-dieta" style="padding: 2px 4px;"><input type="text" value="${dietText}" placeholder="Régimen / Dietoterapia" style="width:100%; border:none; background:transparent; font-size:0.7rem; color:#0f766e; font-weight:600; outline:none;" onchange="window.quickUpdatePatientField('${patient.id}', 'regimen', this.value)" title="Dietoterapia (Editar)"></td>
                                 <td class="col-obs" style="padding: 2px 4px;"><input type="text" value="${patient.metadata?.observaciones_generales || ''}" placeholder="Observaciones..." style="width:100%; border:none; background:transparent; font-size:0.65rem; color:#64748b; outline:none;" onchange="window.quickUpdatePatientField('${patient.id}', 'obs_generales', this.value)" title="Observaciones (Editar)"></td>
-                                <td class="col-antropo" style="padding: 2px; text-align: center;"><input type="number" step="0.1" value="${patient.peso_kg || ''}" placeholder="--" style="width:100%; border:none; background:transparent; text-align:center; font-weight:700; font-size:0.75rem; color:#1e293b; outline:none;" onchange="window.quickUpdatePatientField('${patient.id}', 'peso_kg', this.value, true)" title="Peso (Editar)"></td>
-                                <td class="col-antropo" style="padding: 2px; text-align: center;"><input type="number" step="0.1" value="${patient.talla_cm || ''}" placeholder="--" style="width:100%; border:none; background:transparent; text-align:center; font-size:0.75rem; color:#1e293b; outline:none;" onchange="window.quickUpdatePatientField('${patient.id}', 'talla_cm', this.value, true)" title="Talla cm (Editar)"></td>
-                                <td class="col-imc" style="padding: 6px 10px; text-align: center; font-weight:700; color:#9d174d;">${imcStr}</td>
-                                <td class="col-imc" style="padding: 6px 10px; text-align: center; font-weight:700; color:#9d174d;">${abbrevStatus}</td>
-                                <td class="col-nrs" style="padding: 6px 10px; text-align: center;">${nrsVal}</td>
+                                <td class="col-antropo" style="padding: 2px; text-align: center;"><input type="number" step="0.1" value="${patient.peso_kg || ''}" placeholder="--" class="input-table-peso" style="width:100%; border:none; background:transparent; text-align:center; font-weight:700; font-size:0.75rem; color:#1e293b; outline:none;" oninput="window.calculateTableIMC('${patient.id}')" onchange="window.quickUpdatePatientField('${patient.id}', 'peso_kg', this.value, true)" title="Peso (Editar)"></td>
+                                <td class="col-antropo" style="padding: 2px; text-align: center;"><input type="number" step="0.1" value="${patient.talla_cm || ''}" placeholder="--" class="input-table-talla" style="width:100%; border:none; background:transparent; text-align:center; font-size:0.75rem; color:#1e293b; outline:none;" oninput="window.calculateTableIMC('${patient.id}')" onchange="window.quickUpdatePatientField('${patient.id}', 'talla_cm', this.value, true)" title="Talla cm (Editar)"></td>
+                                <td class="col-imc" id="table_imc_${patient.id}" style="padding: 6px 10px; text-align: center; font-weight:700; color:#9d174d;">${imcStr}</td>
+                                <td class="col-imc" id="table_est_${patient.id}" style="padding: 6px 10px; text-align: center; font-weight:700; color:#9d174d;">${abbrevStatus}</td>
+                                <td class="col-nrs" id="table_scrg_${patient.id}" style="padding: 6px 10px; text-align: center;"><span style="${nrsBgStyle}">${nrsVal}</span></td>
                                 <td class="col-lpp" style="padding: 2px; text-align: center;">
                                     <select onchange="window.quickUpdatePatientField('${patient.id}', 'riesgo_lpp', this.value)" style="border:none; background:transparent; font-weight:700; font-size:0.7rem; color:${patient.metadata?.riesgo_lpp === 'Alto' ? '#ef4444' : (patient.metadata?.riesgo_lpp === 'Medio' ? '#f59e0b' : '#10b981')}; outline:none; cursor:pointer;" title="Riesgo LPP (Editar)">
                                         <option value="Sin evaluar" ${!patient.metadata?.riesgo_lpp || patient.metadata?.riesgo_lpp === 'Sin evaluar' ? 'selected' : ''}>--</option>
@@ -10761,7 +12273,7 @@ window.renderWardBedsGrid = async function() {
                                         <option value="Alto" ${patient.metadata?.riesgo_lpp === 'Alto' ? 'selected' : ''}>Alto</option>
                                     </select>
                                 </td>
-                                <td class="col-eval" style="padding: 6px 10px; text-align: center; font-weight:600;">${evalType}</td>
+                                <td class="col-eval" style="padding: 4px 6px; text-align: center;">${getEvalPillsHTML(patient, true)}</td>
                                 <td class="col-edad" style="padding: 6px 10px; text-align: center;">${sexLetter}</td>
                                 <td class="col-eval" style="padding: 6px 10px; text-align: center;">${fIngr}</td>
                                 <td style="padding: 6px 10px; text-align: center;">
@@ -10783,6 +12295,13 @@ window.renderWardBedsGrid = async function() {
             `;
 
             grid.innerHTML = tableHTML;
+            if (scrollX > 0) {
+                const newScrollDiv = grid.querySelector('div[style*="overflow-x"]');
+                if (newScrollDiv) newScrollDiv.scrollLeft = scrollX;
+            }
+            if (window.scrollY !== scrollY) {
+                window.scrollTo({ top: scrollY, behavior: 'instant' });
+            }
             if (typeof window.initTableColumnResizing === 'function') {
                 setTimeout(window.initTableColumnResizing, 50);
             }
@@ -10795,6 +12314,13 @@ window.renderWardBedsGrid = async function() {
         
         groupOrder.forEach((roomName, roomIndex) => {
             const bedsInRoom = groupedBeds[roomName];
+            const matchingInRoom = bedsInRoom.filter(b => {
+                const cleanB = b.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+                const p = matchedPatients.find(pat => pat.cama === b || (pat.cama && pat.cama.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanB));
+                return p && (evalFilter === 'all' || p._matchesEvalFilter);
+            }).length;
+            if (evalFilter !== 'all' && matchingInRoom === 0) return;
+
             const elementId = `room-group-${roomIndex}`;
             
             // Calculate stats for this room
@@ -10854,6 +12380,11 @@ window.renderWardBedsGrid = async function() {
             bedsInRoom.forEach(bedName => {
                 const cleanB = bedName.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
                 const patient = matchedPatients.find(p => p.cama === bedName || (p.cama && p.cama.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanB));
+                
+                if (evalFilter !== 'all' && (!patient || !patient._matchesEvalFilter)) {
+                    return;
+                }
+
                 const card = document.createElement('div');
                 
                 if (patient) {
@@ -10884,6 +12415,10 @@ window.renderWardBedsGrid = async function() {
                             </div>
                             ${regimen ? `<div style="font-size:0.75rem; color:#0f766e; font-weight:700; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:3px 6px; margin:4px 0;">🍲 ${regimen}</div>` : ''}
                             ${obsGen ? `<div style="font-size:0.68rem; color:#b45309; font-weight:600; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:3px 6px; margin-top:3px;">⚠️ ${obsGen}</div>` : ''}
+                            <div class="bed-eval-pills-row" style="display:flex; align-items:center; justify-content:space-between; margin-top:6px; padding-top:4px; border-top:1px dashed #e2e8f0;">
+                                <span style="font-size:0.68rem; font-weight:700; color:#64748b;">Evaluación:</span>
+                                ${getEvalPillsHTML(patient, false)}
+                            </div>
                         </div>
                         <div class="bed-actions-row">
                             <button class="circle-action-btn" title="Editar Ficha" onclick="loadPatient('${patient.id}')">📝</button>
@@ -10918,6 +12453,9 @@ window.renderWardBedsGrid = async function() {
 
         // 4. Render active patients who are not assigned to a bed in the configured bedsList (Floating / Cupos)
         floatingPatients = matchedPatients.filter(p => !bedsList.includes(p.cama));
+        if (evalFilter !== 'all') {
+            floatingPatients = floatingPatients.filter(p => p._matchesEvalFilter);
+        }
         if (floatingPatients.length > 0) {
             const elementId = `room-group-floating`;
             const isFloatingCollapsed = collapsedRooms.includes('PACIENTES QUE YA NO ESTÁN EN EL SERVICIO') || collapsedRooms.includes('Pacientes sin Cama');
@@ -10973,6 +12511,10 @@ window.renderWardBedsGrid = async function() {
                             <div class="regime-formula" title="Fórmula">🍼 ${formula}</div>
                             <div class="regime-req" title="Requerimiento">⚡ ${tmtKcal} kcal</div>
                         </div>
+                        <div class="bed-eval-pills-row" style="display:flex; align-items:center; justify-content:space-between; margin-top:6px; padding-top:4px; border-top:1px dashed #e2e8f0;">
+                            <span style="font-size:0.68rem; font-weight:700; color:#64748b;">Evaluación:</span>
+                            ${getEvalPillsHTML(patient, false)}
+                        </div>
                     </div>
                     <div class="bed-actions-row">
                         <button class="circle-action-btn" title="Editar Ficha" onclick="loadPatient('${patient.id}')">📝</button>
@@ -10986,6 +12528,10 @@ window.renderWardBedsGrid = async function() {
             roomGroup.innerHTML = headerHTML;
             roomGroup.appendChild(bedsGridDiv);
             grid.appendChild(roomGroup);
+        }
+
+        if (window.scrollY !== scrollY) {
+            window.scrollTo({ top: scrollY, behavior: 'instant' });
         }
         
     } catch (err) {
