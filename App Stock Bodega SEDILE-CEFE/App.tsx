@@ -703,6 +703,16 @@ export default function App() {
   const [expandedPriceSettings, setExpandedPriceSettings] = useState<Record<string, boolean>>({});
   const [priceCatalogCategory, setPriceCatalogCategory] = useState<string>('Todos');
   const [priceCatalogSearch, setPriceCatalogSearch] = useState<string>('');
+
+  // --- REFS DE CONTROL DE DISK I/O Y PREVENCIÓN DE BUCLES REALTIME ---
+  const isIncomingCloudPricingRef = useRef(false);
+  const cloudPricingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isSyncingLocalMermasRef = useRef(false);
+  const realtimeDebounceRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const debounceRealtime = (key: string, fn: () => void, delayMs = 600) => {
+    if (realtimeDebounceRef.current[key]) clearTimeout(realtimeDebounceRef.current[key]);
+    realtimeDebounceRef.current[key] = setTimeout(fn, delayMs);
+  };
   const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({});
   const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
 
@@ -1224,6 +1234,8 @@ export default function App() {
         .maybeSingle();
 
       if (!error && data?.value && Object.keys(data.value).length > 0) {
+        // Marcamos que la actualización viene desde la nube para NO volver a disparar upsert en bucle
+        isIncomingCloudPricingRef.current = true;
         setFormulaPricings(data.value);
         localStorage.setItem('formula_pricings_v2', JSON.stringify(data.value));
       }
@@ -1232,17 +1244,31 @@ export default function App() {
     }
   };
 
-  // Guardar en localStorage y en Supabase al cambiar
+  // Guardar en localStorage y en Supabase con debounce y control de eco
   useEffect(() => {
     localStorage.setItem('formula_pricings_v2', JSON.stringify(formulaPricings));
-    if (isConfigured) {
-      supabase
-        .from('config_sedile')
-        .upsert({ key: 'formula_pricings_v2', value: formulaPricings, updated_at: new Date().toISOString() })
-        .then(({ error }) => {
-          if (error) console.warn("Aviso al sincronizar config_sedile en Supabase:", error.message);
-        });
+    
+    // Si la actualización vino desde la nube por Realtime o fetch inicial, NO la devolvemos a la nube (evita bucle infinito y Disk I/O al 100%)
+    if (isIncomingCloudPricingRef.current) {
+      isIncomingCloudPricingRef.current = false;
+      return;
     }
+
+    if (isConfigured) {
+      if (cloudPricingTimeoutRef.current) clearTimeout(cloudPricingTimeoutRef.current);
+      cloudPricingTimeoutRef.current = setTimeout(() => {
+        supabase
+          .from('config_sedile')
+          .upsert({ key: 'formula_pricings_v2', value: formulaPricings, updated_at: new Date().toISOString() })
+          .then(({ error }) => {
+            if (error) console.warn("Aviso al sincronizar config_sedile en Supabase:", error.message);
+          });
+      }, 1500); // 1.5s debounce para agrupar cambios y reducir drásticamente escrituras
+    }
+
+    return () => {
+      if (cloudPricingTimeoutRef.current) clearTimeout(cloudPricingTimeoutRef.current);
+    };
   }, [formulaPricings]);
 
   useEffect(() => {
@@ -1396,7 +1422,7 @@ export default function App() {
     fetchFormulaPricingsCloud();
     checkAdminSession();
     
-    // Configurar suscripción Supabase Realtime si está configurado
+    // Configurar suscripción Supabase Realtime si está configurado (con debounce anti-saturación de Disk I/O)
     if (isConfigured) {
       console.log("Configurando suscripción Supabase Realtime...");
       const channel = supabase
@@ -1405,40 +1431,35 @@ export default function App() {
           'postgres_changes',
           { event: '*', schema: 'public', table: 'stock_sedile' },
           (payload) => {
-            console.log('Cambio detectado en tiempo real:', payload);
-            fetchStockData(false); // refresh sin loading spinner para no interrumpir
+            debounceRealtime('stock', () => fetchStockData(false), 500);
           }
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'carga_laboral_sedile' },
           (payload) => {
-            console.log('Cambio detectado en tiempo real (carga laboral):', payload);
-            fetchWorkloadRecords(false); // refresh silencioso
+            debounceRealtime('carga', () => fetchWorkloadRecords(false), 500);
           }
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'mermas_sedile' },
           (payload) => {
-            console.log('Cambio detectado en tiempo real (mermas):', payload);
-            fetchMermasRecords(false); // refresh silencioso
+            debounceRealtime('mermas', () => fetchMermasRecords(false), 500);
           }
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'peg_pediatria' },
           (payload) => {
-            console.log('Cambio detectado en tiempo real (PEG Pediatría):', payload);
-            fetchPegDeliveries(false); // refresh silencioso
+            debounceRealtime('peg', () => fetchPegDeliveries(false), 500);
           }
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'config_sedile' },
           (payload) => {
-            console.log('Cambio detectado en tiempo real (configuración):', payload);
-            fetchFormulaPricingsCloud();
+            debounceRealtime('config', () => fetchFormulaPricingsCloud(), 800);
           }
         )
         .subscribe();
@@ -2220,7 +2241,6 @@ export default function App() {
 
     if (anySynced) {
       localStorage.setItem('mermas_cache', JSON.stringify(remainingLocal));
-      await fetchMermasRecords(false);
       showToast("Mermas locales sincronizadas con la nube con éxito", "success");
     }
   };
@@ -2257,9 +2277,12 @@ export default function App() {
           localStorage.setItem('mermas_cache', JSON.stringify(merged));
           success = true;
 
-          // Si hay registros locales pendientes de sincronizar, enviarlos a Supabase
-          if (localOnly.length > 0) {
-            syncLocalMermasToCloud(localOnly);
+          // Si hay registros locales pendientes de sincronizar, enviarlos a Supabase (con bloqueo de concurrencia)
+          if (localOnly.length > 0 && !isSyncingLocalMermasRef.current) {
+            isSyncingLocalMermasRef.current = true;
+            syncLocalMermasToCloud(localOnly).finally(() => {
+              isSyncingLocalMermasRef.current = false;
+            });
           }
         } else {
           console.error("Error al obtener mermas de Supabase:", error);
@@ -8085,14 +8108,7 @@ export default function App() {
                         localStorage.setItem('formula_pricings_v2', JSON.stringify(next));
                       } catch (e) {}
 
-                      if (isConfigured) {
-                        supabase
-                          .from('config_sedile')
-                          .upsert({ key: 'formula_pricings_v2', value: next, updated_at: new Date().toISOString() })
-                          .then(({ error }) => {
-                            if (error) console.warn("Aviso al sincronizar formula_pricings_v2:", error.message);
-                          });
-                      }
+// El guardado en la nube se ejecuta con debounce automático en el useEffect
 
                       return next;
                     });
