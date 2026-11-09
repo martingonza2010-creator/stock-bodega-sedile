@@ -1,16 +1,11 @@
 -- ==============================================================================
--- SCRIPT DE OPTIMIZACIÓN DE DISK I/O PARA SUPABASE (SEDILE HRA / STOCK)
+-- SCRIPT DE OPTIMIZACIÓN DE DISK I/O Y CREACIÓN DE ÍNDICES - SEDILE HRA (V2)
 -- ==============================================================================
 -- Copie y pegue este script en el editor SQL de Supabase (SQL Editor) y presione 'Run'.
--- Este script:
---   1. Crea índices B-Tree para eliminar escaneos secuenciales completos de disco.
---   2. Limpia el historial antiguo acumulado en stock_history (mayor a 60 días).
---   3. Excluye tablas de alto volumen de la réplica en tiempo real innecesaria (WAL).
---   4. Ejecuta VACUUM ANALYZE para desfragmentar disco y actualizar estadísticas.
 -- ==============================================================================
 
 -- ------------------------------------------------------------------------------
--- PASO 1: CREACIÓN DE ÍNDICES ESTRATÉGICOS (Evita Full Table Scans en lecturas)
+-- PASO 1: CREACIÓN DE ÍNDICES ESTRATÉGICOS (Elimina escaneos secuenciales en disco)
 -- ------------------------------------------------------------------------------
 
 -- Tabla: mermas_sedile (Consultas ordenadas por fecha y filtros de mes)
@@ -44,38 +39,22 @@ CREATE INDEX IF NOT EXISTS idx_config_sedile_key
 ON public.config_sedile (key);
 
 -- ------------------------------------------------------------------------------
--- PASO 2: LIMPIEZA DE HISTORIAL ANTIGUO ACUMULADO (Pruning de stock_history)
+-- PASO 2: LIMPIAR HISTORIAL ANTIGUO ACUMULADO (Pruning de stock_history)
 -- ------------------------------------------------------------------------------
--- Mantiene los últimos 60 días de cambios y elimina los registros más viejos
+-- Mantiene los últimos 60 días de cambios y elimina registros viejos
 -- que sobrecargan el almacenamiento y las consultas.
 DELETE FROM public.stock_history 
 WHERE changed_at < NOW() - INTERVAL '60 days';
 
 -- ------------------------------------------------------------------------------
--- PASO 3: REMOVER TABLAS DE HISTORIAL DE LA RÉPLICA REALTIME
+-- PASO 3: DESFRAGMENTAR Y LIBERAR ESPACIO EN DISCO
 -- ------------------------------------------------------------------------------
--- stock_history no necesita emitir eventos por WebSocket a cada cliente,
--- ya que cada UPDATE de stock_sedile ya notifica el cambio.
--- Esto reduce significativamente las escrituras en el WAL (Write-Ahead Log).
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'stock_history'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime DROP TABLE public.stock_history;
-    END IF;
-END $$;
-
--- ------------------------------------------------------------------------------
--- PASO 4: DESFRAGMENTACIÓN DE DISCO Y ACTUALIZACIÓN DE ESTADÍSTICAS
--- ------------------------------------------------------------------------------
--- Reclama espacio en disco de filas actualizadas/borradas y recalcula los planes
--- de ejecución para que Postgres use los nuevos índices en lugar del disco.
+-- Reclama espacio en disco de filas borradas/actualizadas y actualiza
+-- las estadísticas de PostgreSQL para que use los nuevos índices.
 VACUUM (ANALYZE, VERBOSE);
 
 -- ------------------------------------------------------------------------------
--- PASO 5: DIAGNÓSTICO DEL TAMAÑO DE TABLAS (Para verificar espacio liberado)
+-- PASO 4: DIAGNÓSTICO DEL TAMAÑO DE TABLAS (Muestra el peso real de cada tabla)
 -- ------------------------------------------------------------------------------
 SELECT 
     table_name AS tabla,
